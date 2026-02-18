@@ -21,6 +21,16 @@ class Countdown:
 
 
 @dataclass
+class TrackedFlight:
+    """A tracked flight."""
+    id: Optional[int]
+    flight_number: str  # e.g., "AA100"
+    flight_date: date  # Date of the flight
+    enabled: bool = True
+    created_at: Optional[datetime] = None
+
+
+@dataclass
 class ScheduledMessage:
     """A scheduled message."""
     id: Optional[int]
@@ -94,12 +104,22 @@ class Storage:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS tracked_flights (
+                id INTEGER PRIMARY KEY,
+                flight_number TEXT NOT NULL,
+                flight_date DATE NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_scheduled_enabled
                 ON scheduled_messages(enabled);
             CREATE INDEX IF NOT EXISTS idx_log_sent
                 ON message_log(sent_at);
             CREATE INDEX IF NOT EXISTS idx_countdowns_date
                 ON countdowns(target_date);
+            CREATE INDEX IF NOT EXISTS idx_flights_date
+                ON tracked_flights(flight_date);
         """)
 
         conn.commit()
@@ -352,6 +372,100 @@ class Storage:
         conn = self._get_connection()
         cursor = conn.cursor()
         cursor.execute("DELETE FROM countdowns WHERE id = ?", (countdown_id,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted
+
+    # ========== Tracked Flights ==========
+
+    def save_flight(self, flight: TrackedFlight) -> int:
+        """Save or update a tracked flight."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if flight.id:
+            cursor.execute("""
+                UPDATE tracked_flights
+                SET flight_number = ?, flight_date = ?, enabled = ?
+                WHERE id = ?
+            """, (flight.flight_number.upper(), flight.flight_date.isoformat(),
+                  flight.enabled, flight.id))
+            flight_id = flight.id
+        else:
+            cursor.execute("""
+                INSERT INTO tracked_flights (flight_number, flight_date, enabled)
+                VALUES (?, ?, ?)
+            """, (flight.flight_number.upper(), flight.flight_date.isoformat(),
+                  flight.enabled))
+            flight_id = cursor.lastrowid
+
+        conn.commit()
+        conn.close()
+        return flight_id
+
+    def get_flights(self, enabled_only: bool = False, include_past: bool = False) -> list[TrackedFlight]:
+        """Get all tracked flights."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        today = date.today().isoformat()
+
+        if enabled_only and not include_past:
+            cursor.execute(
+                "SELECT * FROM tracked_flights WHERE enabled = TRUE AND flight_date >= ? ORDER BY flight_date",
+                (today,)
+            )
+        elif enabled_only:
+            cursor.execute(
+                "SELECT * FROM tracked_flights WHERE enabled = TRUE ORDER BY flight_date"
+            )
+        elif not include_past:
+            cursor.execute(
+                "SELECT * FROM tracked_flights WHERE flight_date >= ? ORDER BY flight_date",
+                (today,)
+            )
+        else:
+            cursor.execute("SELECT * FROM tracked_flights ORDER BY flight_date")
+
+        flights = []
+        for row in cursor.fetchall():
+            flights.append(TrackedFlight(
+                id=row["id"],
+                flight_number=row["flight_number"],
+                flight_date=date.fromisoformat(row["flight_date"]),
+                enabled=bool(row["enabled"]),
+                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
+            ))
+
+        conn.close()
+        return flights
+
+    def get_flight(self, flight_id: int) -> Optional[TrackedFlight]:
+        """Get a tracked flight by ID."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM tracked_flights WHERE id = ?", (flight_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        return TrackedFlight(
+            id=row["id"],
+            flight_number=row["flight_number"],
+            flight_date=date.fromisoformat(row["flight_date"]),
+            enabled=bool(row["enabled"]),
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
+        )
+
+    def delete_flight(self, flight_id: int) -> bool:
+        """Delete a tracked flight."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tracked_flights WHERE id = ?", (flight_id,))
         deleted = cursor.rowcount > 0
         conn.commit()
         conn.close()

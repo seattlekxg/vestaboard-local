@@ -389,3 +389,243 @@ class CountdownFetcher:
             lines.append(line)
 
         return lines
+
+
+@dataclass
+class FlightStatus:
+    """Flight status information."""
+    flight_number: str
+    airline: str
+    departure_airport: str
+    departure_code: str
+    arrival_airport: str
+    arrival_code: str
+    status: str  # "scheduled", "active", "landed", "cancelled", "diverted"
+    scheduled_departure: Optional[datetime]
+    actual_departure: Optional[datetime]
+    scheduled_arrival: Optional[datetime]
+    actual_arrival: Optional[datetime]
+    delay_minutes: int = 0
+
+
+class FlightFetcher:
+    """Fetch flight status from AviationStack API."""
+
+    def __init__(self, api_key: Optional[str] = None, storage=None):
+        self.api_key = api_key or config.aviationstack_api_key
+        self.storage = storage
+
+    def fetch(self, flight_number: str, flight_date: date = None) -> Optional[FlightStatus]:
+        """Fetch flight status.
+
+        Args:
+            flight_number: Flight number (e.g., "AA100").
+            flight_date: Date of the flight.
+
+        Returns:
+            FlightStatus or None if not found.
+        """
+        if not self.api_key:
+            print("AviationStack API key not configured")
+            return None
+
+        # Clean up flight number
+        flight_number = flight_number.upper().replace(" ", "")
+
+        try:
+            params = {
+                "access_key": self.api_key,
+                "flight_iata": flight_number,
+            }
+
+            # Add date filter if provided
+            if flight_date:
+                params["flight_date"] = flight_date.isoformat()
+
+            response = requests.get(
+                "http://api.aviationstack.com/v1/flights",
+                params=params,
+                timeout=15
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if "error" in data:
+                print(f"AviationStack error: {data['error']}")
+                return None
+
+            flights = data.get("data", [])
+            if not flights:
+                print(f"No flight found for {flight_number}")
+                return None
+
+            # Get the first matching flight
+            flight = flights[0]
+
+            # Parse departure info
+            departure = flight.get("departure", {})
+            arrival = flight.get("arrival", {})
+
+            # Parse times
+            def parse_time(time_str):
+                if not time_str:
+                    return None
+                try:
+                    return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+                except:
+                    return None
+
+            scheduled_dep = parse_time(departure.get("scheduled"))
+            actual_dep = parse_time(departure.get("actual"))
+            scheduled_arr = parse_time(arrival.get("scheduled"))
+            actual_arr = parse_time(arrival.get("actual"))
+
+            # Determine status
+            status = flight.get("flight_status", "unknown")
+
+            # Calculate delay
+            delay = departure.get("delay", 0) or 0
+
+            return FlightStatus(
+                flight_number=flight_number,
+                airline=flight.get("airline", {}).get("name", ""),
+                departure_airport=departure.get("airport", ""),
+                departure_code=departure.get("iata", ""),
+                arrival_airport=arrival.get("airport", ""),
+                arrival_code=arrival.get("iata", ""),
+                status=status,
+                scheduled_departure=scheduled_dep,
+                actual_departure=actual_dep,
+                scheduled_arrival=scheduled_arr,
+                actual_arrival=actual_arr,
+                delay_minutes=delay
+            )
+
+        except Exception as e:
+            print(f"Error fetching flight {flight_number}: {e}")
+            return None
+
+    def get_tracked_flights(self) -> list[tuple]:
+        """Get all tracked flights with their status.
+
+        Returns:
+            List of (TrackedFlight, FlightStatus) tuples.
+        """
+        if not self.storage:
+            from .storage import Storage
+            self.storage = Storage()
+
+        flights = self.storage.get_flights(enabled_only=True, include_past=False)
+        results = []
+
+        for flight in flights:
+            status = self.fetch(flight.flight_number, flight.flight_date)
+            results.append((flight, status))
+
+        return results
+
+    def format_for_board(self, flight_status: FlightStatus = None, tracked_flight=None) -> list[str]:
+        """Format flight status for Vestaboard display.
+
+        Args:
+            flight_status: FlightStatus object.
+            tracked_flight: Optional TrackedFlight for context.
+
+        Returns:
+            List of lines for the board.
+        """
+        if not flight_status:
+            # Try to get first tracked flight
+            tracked = self.get_tracked_flights()
+            if tracked:
+                tracked_flight, flight_status = tracked[0]
+
+        if not flight_status:
+            return [
+                "FLIGHT TRACKER",
+                "",
+                "NO FLIGHTS",
+                "TRACKED",
+                "",
+                "ADD ONE IN THE APP"
+            ]
+
+        lines = []
+
+        # Line 1: Flight number and route
+        route = f"{flight_status.departure_code} TO {flight_status.arrival_code}"
+        lines.append(f"{flight_status.flight_number} {route}")
+
+        # Line 2: Airline (truncated)
+        lines.append(flight_status.airline[:22].upper())
+
+        # Line 3: Empty
+        lines.append("")
+
+        # Lines 4-5: Status specific info
+        now = datetime.now(flight_status.scheduled_departure.tzinfo if flight_status.scheduled_departure else None)
+
+        if flight_status.status == "active":
+            # In flight - show time remaining
+            if flight_status.scheduled_arrival:
+                remaining = flight_status.scheduled_arrival - now
+                hours = int(remaining.total_seconds() // 3600)
+                minutes = int((remaining.total_seconds() % 3600) // 60)
+                if hours > 0:
+                    lines.append(f"{hours}H {minutes}M REMAINING")
+                else:
+                    lines.append(f"{minutes}M REMAINING")
+            else:
+                lines.append("IN FLIGHT")
+            lines.append("IN THE AIR")
+
+        elif flight_status.status == "landed":
+            lines.append("LANDED")
+            if flight_status.actual_arrival:
+                arr_time = flight_status.actual_arrival.strftime("%I:%M %p").lstrip("0")
+                lines.append(f"ARRIVED {arr_time}")
+            else:
+                lines.append("")
+
+        elif flight_status.status == "cancelled":
+            lines.append("CANCELLED")
+            lines.append("")
+
+        elif flight_status.status == "diverted":
+            lines.append("DIVERTED")
+            lines.append("")
+
+        else:  # scheduled or unknown
+            # Show time until departure
+            if flight_status.scheduled_departure:
+                time_until = flight_status.scheduled_departure - now
+                total_seconds = time_until.total_seconds()
+
+                if total_seconds > 0:
+                    hours = int(total_seconds // 3600)
+                    minutes = int((total_seconds % 3600) // 60)
+                    if hours > 24:
+                        days = hours // 24
+                        lines.append(f"DEPARTS IN {days}D")
+                    elif hours > 0:
+                        lines.append(f"DEPARTS IN {hours}H {minutes}M")
+                    else:
+                        lines.append(f"DEPARTS IN {minutes}M")
+                else:
+                    lines.append("DEPARTED")
+
+                dep_time = flight_status.scheduled_departure.strftime("%I:%M %p").lstrip("0")
+                lines.append(f"AT {dep_time}")
+            else:
+                lines.append("SCHEDULED")
+                lines.append("")
+
+        # Line 6: Delay info or on time
+        if flight_status.delay_minutes > 0:
+            lines.append(f"DELAYED {flight_status.delay_minutes} MIN")
+        elif flight_status.status in ["scheduled", "active"]:
+            lines.append("ON TIME")
+        else:
+            lines.append("")
+
+        return lines[:6]  # Ensure max 6 lines

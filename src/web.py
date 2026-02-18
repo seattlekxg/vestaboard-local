@@ -6,9 +6,9 @@ from typing import Optional
 
 from .client import VestaboardClient
 from .config import config
-from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher, CountdownFetcher
+from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher, CountdownFetcher, FlightFetcher
 from .scheduler import MessageScheduler
-from .storage import Storage, ScheduledMessage, Countdown
+from .storage import Storage, ScheduledMessage, Countdown, TrackedFlight
 
 app = Flask(__name__)
 
@@ -132,7 +132,10 @@ CONTROL_PANEL_HTML = """
             <button onclick="sendWeather()">Weather</button>
             <button onclick="sendStocks()">Stocks</button>
             <button onclick="sendCountdowns()">Countdowns</button>
-            <button onclick="clearBoard()" class="secondary">Clear</button>
+            <button onclick="sendFlights()">Flights</button>
+        </div>
+        <div class="btn-group" style="margin-top:10px;">
+            <button onclick="clearBoard()" class="secondary">Clear Board</button>
         </div>
     </div>
 
@@ -144,6 +147,16 @@ CONTROL_PANEL_HTML = """
         <input type="text" id="countdownName" placeholder="Event name (e.g., Vacation)">
         <input type="date" id="countdownDate">
         <button onclick="addCountdown()">Add Countdown</button>
+    </div>
+
+    <div class="card">
+        <h2>Flight Tracker</h2>
+        <div id="flights">Loading...</div>
+        <hr>
+        <h3>Track a Flight</h3>
+        <input type="text" id="flightNumber" placeholder="Flight number (e.g., AA100)">
+        <input type="date" id="flightDate">
+        <button onclick="addFlight()">Track Flight</button>
     </div>
 
     <div class="card">
@@ -263,6 +276,59 @@ CONTROL_PANEL_HTML = """
             loadCountdowns();
         }
 
+        async function sendFlights() {
+            const res = await api('POST', '/message/flights');
+            alert(res.success ? 'Flight info sent!' : 'Failed: ' + (res.error || 'Unknown error'));
+            loadLogs();
+        }
+
+        async function loadFlights() {
+            const res = await api('GET', '/flights');
+            const div = document.getElementById('flights');
+            if (!res.flights || res.flights.length === 0) {
+                div.innerHTML = '<p>No flights being tracked.</p>';
+                return;
+            }
+            div.innerHTML = res.flights.map(f => `
+                <div class="schedule-item">
+                    <div>
+                        <strong>${f.flight_number}</strong><br>
+                        <small>${f.flight_date} | ${f.status || 'Unknown'}</small>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <div class="toggle ${f.enabled ? 'active' : ''}"
+                             onclick="toggleFlight(${f.id}, ${!f.enabled})"></div>
+                        <button onclick="deleteFlight(${f.id})" class="danger"
+                                style="width:auto;padding:5px 10px;">X</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function toggleFlight(id, enabled) {
+            await api('PUT', '/flights/' + id, { enabled });
+            loadFlights();
+        }
+
+        async function deleteFlight(id) {
+            if (!confirm('Delete this flight?')) return;
+            await api('DELETE', '/flights/' + id);
+            loadFlights();
+        }
+
+        async function addFlight() {
+            const flight_number = document.getElementById('flightNumber').value;
+            const flight_date = document.getElementById('flightDate').value;
+            if (!flight_number || !flight_date) {
+                alert('Flight number and date are required');
+                return;
+            }
+            await api('POST', '/flights', { flight_number, flight_date });
+            document.getElementById('flightNumber').value = '';
+            document.getElementById('flightDate').value = '';
+            loadFlights();
+        }
+
         async function loadSchedules() {
             const res = await api('GET', '/schedules');
             const div = document.getElementById('schedules');
@@ -333,6 +399,7 @@ CONTROL_PANEL_HTML = """
         // Load data on page load
         loadSchedules();
         loadCountdowns();
+        loadFlights();
         loadLogs();
     </script>
 </body>
@@ -632,6 +699,113 @@ def api_update_countdown(countdown_id: int):
 def api_delete_countdown(countdown_id: int):
     """Delete a countdown."""
     deleted = storage.delete_countdown(countdown_id)
+    return jsonify({"success": deleted})
+
+
+# ========== Flight Tracking ==========
+
+@app.route("/api/message/flights", methods=["POST"])
+def api_send_flights():
+    """Send flight status to the Vestaboard."""
+    fetcher = FlightFetcher(storage=storage)
+    tracked = fetcher.get_tracked_flights()
+
+    if not tracked:
+        return jsonify({"success": False, "error": "No flights being tracked"})
+
+    # Get the first tracked flight with status
+    tracked_flight, flight_status = tracked[0]
+
+    if not flight_status:
+        return jsonify({"success": False, "error": "Could not fetch flight status"})
+
+    lines = fetcher.format_for_board(flight_status, tracked_flight)
+    success = client.send_lines(lines)
+    storage.log_message("flights", "\n".join(lines), success)
+
+    return jsonify({"success": success})
+
+
+@app.route("/api/flights", methods=["GET"])
+def api_get_flights():
+    """Get all tracked flights with their current status."""
+    from datetime import date
+    flights = storage.get_flights(include_past=False)
+
+    # Optionally fetch live status for each flight
+    fetcher = FlightFetcher(storage=storage)
+
+    result = []
+    for f in flights:
+        flight_data = {
+            "id": f.id,
+            "flight_number": f.flight_number,
+            "flight_date": f.flight_date.isoformat(),
+            "enabled": f.enabled,
+            "status": None
+        }
+
+        # Try to get live status
+        if f.enabled:
+            status = fetcher.fetch(f.flight_number, f.flight_date)
+            if status:
+                flight_data["status"] = status.status
+
+        result.append(flight_data)
+
+    return jsonify({"flights": result})
+
+
+@app.route("/api/flights", methods=["POST"])
+def api_create_flight():
+    """Create a new tracked flight."""
+    from datetime import date
+    data = request.get_json() or {}
+
+    try:
+        flight_date = date.fromisoformat(data.get("flight_date", ""))
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid date format"}), 400
+
+    flight = TrackedFlight(
+        id=None,
+        flight_number=data.get("flight_number", "").upper(),
+        flight_date=flight_date,
+        enabled=data.get("enabled", True)
+    )
+
+    flight_id = storage.save_flight(flight)
+    return jsonify({"success": True, "id": flight_id})
+
+
+@app.route("/api/flights/<int:flight_id>", methods=["PUT"])
+def api_update_flight(flight_id: int):
+    """Update a tracked flight."""
+    from datetime import date
+    data = request.get_json() or {}
+
+    flight = storage.get_flight(flight_id)
+    if not flight:
+        return jsonify({"success": False, "error": "Not found"}), 404
+
+    if "flight_number" in data:
+        flight.flight_number = data["flight_number"].upper()
+    if "flight_date" in data:
+        try:
+            flight.flight_date = date.fromisoformat(data["flight_date"])
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid date format"}), 400
+    if "enabled" in data:
+        flight.enabled = data["enabled"]
+
+    storage.save_flight(flight)
+    return jsonify({"success": True})
+
+
+@app.route("/api/flights/<int:flight_id>", methods=["DELETE"])
+def api_delete_flight(flight_id: int):
+    """Delete a tracked flight."""
+    deleted = storage.delete_flight(flight_id)
     return jsonify({"success": deleted})
 
 

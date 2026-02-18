@@ -30,6 +30,9 @@ class Config:
     # News API
     news_api_key: Optional[str] = None
 
+    # Flight Tracking (AviationStack)
+    aviationstack_api_key: Optional[str] = None
+
     # Web server
     web_host: str = "0.0.0.0"
     web_port: int = 8080
@@ -55,6 +58,7 @@ class Config:
             stock_symbols=stock_symbols,
             calendar_url=os.getenv("CALENDAR_URL"),
             news_api_key=os.getenv("NEWS_API_KEY"),
+            aviationstack_api_key=os.getenv("AVIATIONSTACK_API_KEY"),
             web_host=os.getenv("WEB_HOST", "0.0.0.0"),
             web_port=int(os.getenv("WEB_PORT", "8080")),
             db_path=os.getenv("DB_PATH", "data/vestaboard.db"),
