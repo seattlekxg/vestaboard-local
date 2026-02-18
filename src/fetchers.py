@@ -595,7 +595,7 @@ class FlightFetcher:
             lines.append("DIVERTED")
             lines.append("")
 
-        else:  # scheduled or unknown
+        elif flight_status.status in ["scheduled", "unknown"]:
             # Show time until departure
             if flight_status.scheduled_departure:
                 time_until = flight_status.scheduled_departure - now

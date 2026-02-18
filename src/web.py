@@ -707,14 +707,34 @@ def api_delete_countdown(countdown_id: int):
 @app.route("/api/message/flights", methods=["POST"])
 def api_send_flights():
     """Send flight status to the Vestaboard."""
+    from datetime import date
     fetcher = FlightFetcher(storage=storage)
-    tracked = fetcher.get_tracked_flights()
+    flights = storage.get_flights(enabled_only=True, include_past=False)
 
-    if not tracked:
+    if not flights:
         return jsonify({"success": False, "error": "No flights being tracked"})
 
-    # Get the first tracked flight with status
-    tracked_flight, flight_status = tracked[0]
+    # Get the first tracked flight
+    tracked_flight = flights[0]
+    today = date.today()
+
+    # Check if flight is in the future (API won't have data)
+    if tracked_flight.flight_date > today:
+        days_until = (tracked_flight.flight_date - today).days
+        lines = [
+            "FLIGHT TRACKER",
+            "",
+            tracked_flight.flight_number,
+            "",
+            f"DEPARTS IN {days_until} DAYS",
+            tracked_flight.flight_date.strftime("%b %d").upper()
+        ]
+        success = client.send_lines(lines)
+        storage.log_message("flights", "\n".join(lines), success)
+        return jsonify({"success": success})
+
+    # Today's flight - fetch live status
+    flight_status = fetcher.fetch(tracked_flight.flight_number, tracked_flight.flight_date)
 
     if not flight_status:
         return jsonify({"success": False, "error": "Could not fetch flight status"})
@@ -731,6 +751,7 @@ def api_get_flights():
     """Get all tracked flights with their current status."""
     from datetime import date
     flights = storage.get_flights(include_past=False)
+    today = date.today()
 
     # Optionally fetch live status for each flight
     fetcher = FlightFetcher(storage=storage)
@@ -745,11 +766,18 @@ def api_get_flights():
             "status": None
         }
 
-        # Try to get live status
+        # Try to get live status (only for today's flights - API doesn't have future data)
         if f.enabled:
-            status = fetcher.fetch(f.flight_number, f.flight_date)
-            if status:
-                flight_data["status"] = status.status
+            if f.flight_date > today:
+                # Future flight - API won't have data yet
+                days_until = (f.flight_date - today).days
+                flight_data["status"] = f"Upcoming ({days_until}d)"
+            else:
+                status = fetcher.fetch(f.flight_number, f.flight_date)
+                if status:
+                    flight_data["status"] = status.status.title()
+                else:
+                    flight_data["status"] = "Not found"
 
         result.append(flight_data)
 
