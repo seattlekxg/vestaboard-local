@@ -6,9 +6,9 @@ from typing import Optional
 
 from .client import VestaboardClient
 from .config import config
-from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher
+from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher, CountdownFetcher
 from .scheduler import MessageScheduler
-from .storage import Storage, ScheduledMessage
+from .storage import Storage, ScheduledMessage, Countdown
 
 app = Flask(__name__)
 
@@ -131,9 +131,19 @@ CONTROL_PANEL_HTML = """
         <div class="btn-group">
             <button onclick="sendWeather()">Weather</button>
             <button onclick="sendStocks()">Stocks</button>
-            <button onclick="sendCalendar()">Calendar</button>
+            <button onclick="sendCountdowns()">Countdowns</button>
             <button onclick="clearBoard()" class="secondary">Clear</button>
         </div>
+    </div>
+
+    <div class="card">
+        <h2>Countdowns</h2>
+        <div id="countdowns">Loading...</div>
+        <hr>
+        <h3>Add New Countdown</h3>
+        <input type="text" id="countdownName" placeholder="Event name (e.g., Vacation)">
+        <input type="date" id="countdownDate">
+        <button onclick="addCountdown()">Add Countdown</button>
     </div>
 
     <div class="card">
@@ -148,6 +158,7 @@ CONTROL_PANEL_HTML = """
             <option value="stocks">Stocks</option>
             <option value="calendar">Calendar</option>
             <option value="news">News</option>
+            <option value="countdowns">Countdowns</option>
         </select>
         <input type="text" id="newContent" placeholder="Message content (for text type)">
         <input type="text" id="newCron" placeholder="Cron expression (e.g., 0 8 * * *)">
@@ -194,9 +205,62 @@ CONTROL_PANEL_HTML = """
             loadLogs();
         }
 
+        async function sendCountdowns() {
+            const res = await api('POST', '/message/countdowns');
+            alert(res.success ? 'Countdowns sent!' : 'Failed');
+            loadLogs();
+        }
+
         async function clearBoard() {
             const res = await api('POST', '/clear');
             alert(res.success ? 'Cleared!' : 'Failed');
+        }
+
+        async function loadCountdowns() {
+            const res = await api('GET', '/countdowns');
+            const div = document.getElementById('countdowns');
+            if (!res.countdowns || res.countdowns.length === 0) {
+                div.innerHTML = '<p>No countdowns configured.</p>';
+                return;
+            }
+            div.innerHTML = res.countdowns.map(c => `
+                <div class="schedule-item">
+                    <div>
+                        <strong>${c.name}</strong><br>
+                        <small>${c.target_date} (${c.days_remaining} days)</small>
+                    </div>
+                    <div style="display:flex;gap:10px;align-items:center;">
+                        <div class="toggle ${c.enabled ? 'active' : ''}"
+                             onclick="toggleCountdown(${c.id}, ${!c.enabled})"></div>
+                        <button onclick="deleteCountdown(${c.id})" class="danger"
+                                style="width:auto;padding:5px 10px;">X</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function toggleCountdown(id, enabled) {
+            await api('PUT', '/countdowns/' + id, { enabled });
+            loadCountdowns();
+        }
+
+        async function deleteCountdown(id) {
+            if (!confirm('Delete this countdown?')) return;
+            await api('DELETE', '/countdowns/' + id);
+            loadCountdowns();
+        }
+
+        async function addCountdown() {
+            const name = document.getElementById('countdownName').value;
+            const target_date = document.getElementById('countdownDate').value;
+            if (!name || !target_date) {
+                alert('Name and date are required');
+                return;
+            }
+            await api('POST', '/countdowns', { name, target_date });
+            document.getElementById('countdownName').value = '';
+            document.getElementById('countdownDate').value = '';
+            loadCountdowns();
         }
 
         async function loadSchedules() {
@@ -268,6 +332,7 @@ CONTROL_PANEL_HTML = """
 
         // Load data on page load
         loadSchedules();
+        loadCountdowns();
         loadLogs();
     </script>
 </body>
@@ -348,6 +413,17 @@ def api_send_calendar():
     lines = fetcher.format_for_board(events)
     success = client.send_lines(lines)
     storage.log_message("calendar", "\n".join(lines), success)
+
+    return jsonify({"success": success})
+
+
+@app.route("/api/message/countdowns", methods=["POST"])
+def api_send_countdowns():
+    """Send countdowns to the Vestaboard."""
+    fetcher = CountdownFetcher(storage=storage)
+    lines = fetcher.format_for_board()
+    success = client.send_lines(lines)
+    storage.log_message("countdowns", "\n".join(lines), success)
 
     return jsonify({"success": success})
 
@@ -482,6 +558,81 @@ def api_run_schedule(schedule_id: int):
 
     success = scheduler.execute_message(msg)
     return jsonify({"success": success})
+
+
+# ========== Countdown Management ==========
+
+@app.route("/api/countdowns", methods=["GET"])
+def api_get_countdowns():
+    """Get all countdowns."""
+    from datetime import date
+    countdowns = storage.get_countdowns(include_past=False)
+    today = date.today()
+    return jsonify({
+        "countdowns": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "target_date": c.target_date.isoformat(),
+                "enabled": c.enabled,
+                "days_remaining": (c.target_date - today).days
+            }
+            for c in countdowns
+        ]
+    })
+
+
+@app.route("/api/countdowns", methods=["POST"])
+def api_create_countdown():
+    """Create a new countdown."""
+    from datetime import date
+    data = request.get_json() or {}
+
+    try:
+        target_date = date.fromisoformat(data.get("target_date", ""))
+    except ValueError:
+        return jsonify({"success": False, "error": "Invalid date format"}), 400
+
+    countdown = Countdown(
+        id=None,
+        name=data.get("name", "Untitled"),
+        target_date=target_date,
+        enabled=data.get("enabled", True)
+    )
+
+    countdown_id = storage.save_countdown(countdown)
+    return jsonify({"success": True, "id": countdown_id})
+
+
+@app.route("/api/countdowns/<int:countdown_id>", methods=["PUT"])
+def api_update_countdown(countdown_id: int):
+    """Update a countdown."""
+    from datetime import date
+    data = request.get_json() or {}
+
+    countdown = storage.get_countdown(countdown_id)
+    if not countdown:
+        return jsonify({"success": False, "error": "Not found"}), 404
+
+    if "name" in data:
+        countdown.name = data["name"]
+    if "target_date" in data:
+        try:
+            countdown.target_date = date.fromisoformat(data["target_date"])
+        except ValueError:
+            return jsonify({"success": False, "error": "Invalid date format"}), 400
+    if "enabled" in data:
+        countdown.enabled = data["enabled"]
+
+    storage.save_countdown(countdown)
+    return jsonify({"success": True})
+
+
+@app.route("/api/countdowns/<int:countdown_id>", methods=["DELETE"])
+def api_delete_countdown(countdown_id: int):
+    """Delete a countdown."""
+    deleted = storage.delete_countdown(countdown_id)
+    return jsonify({"success": deleted})
 
 
 # ========== Logs ==========

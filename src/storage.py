@@ -4,10 +4,20 @@ import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, time
+from datetime import datetime, date, time
 from typing import Optional
 
 from .config import config
+
+
+@dataclass
+class Countdown:
+    """A countdown to a future event."""
+    id: Optional[int]
+    name: str
+    target_date: date
+    enabled: bool = True
+    created_at: Optional[datetime] = None
 
 
 @dataclass
@@ -76,10 +86,20 @@ class Storage:
                 value TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS countdowns (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                target_date DATE NOT NULL,
+                enabled BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_scheduled_enabled
                 ON scheduled_messages(enabled);
             CREATE INDEX IF NOT EXISTS idx_log_sent
                 ON message_log(sent_at);
+            CREATE INDEX IF NOT EXISTS idx_countdowns_date
+                ON countdowns(target_date);
         """)
 
         conn.commit()
@@ -242,3 +262,97 @@ class Storage:
         )
         conn.commit()
         conn.close()
+
+    # ========== Countdowns ==========
+
+    def save_countdown(self, countdown: Countdown) -> int:
+        """Save or update a countdown."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        if countdown.id:
+            cursor.execute("""
+                UPDATE countdowns
+                SET name = ?, target_date = ?, enabled = ?
+                WHERE id = ?
+            """, (countdown.name, countdown.target_date.isoformat(),
+                  countdown.enabled, countdown.id))
+            countdown_id = countdown.id
+        else:
+            cursor.execute("""
+                INSERT INTO countdowns (name, target_date, enabled)
+                VALUES (?, ?, ?)
+            """, (countdown.name, countdown.target_date.isoformat(),
+                  countdown.enabled))
+            countdown_id = cursor.lastrowid
+
+        conn.commit()
+        conn.close()
+        return countdown_id
+
+    def get_countdowns(self, enabled_only: bool = False, include_past: bool = False) -> list[Countdown]:
+        """Get all countdowns, optionally filtering by enabled and future dates."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        today = date.today().isoformat()
+
+        if enabled_only and not include_past:
+            cursor.execute(
+                "SELECT * FROM countdowns WHERE enabled = TRUE AND target_date >= ? ORDER BY target_date",
+                (today,)
+            )
+        elif enabled_only:
+            cursor.execute(
+                "SELECT * FROM countdowns WHERE enabled = TRUE ORDER BY target_date"
+            )
+        elif not include_past:
+            cursor.execute(
+                "SELECT * FROM countdowns WHERE target_date >= ? ORDER BY target_date",
+                (today,)
+            )
+        else:
+            cursor.execute("SELECT * FROM countdowns ORDER BY target_date")
+
+        countdowns = []
+        for row in cursor.fetchall():
+            countdowns.append(Countdown(
+                id=row["id"],
+                name=row["name"],
+                target_date=date.fromisoformat(row["target_date"]),
+                enabled=bool(row["enabled"]),
+                created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
+            ))
+
+        conn.close()
+        return countdowns
+
+    def get_countdown(self, countdown_id: int) -> Optional[Countdown]:
+        """Get a countdown by ID."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT * FROM countdowns WHERE id = ?", (countdown_id,))
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            return None
+
+        return Countdown(
+            id=row["id"],
+            name=row["name"],
+            target_date=date.fromisoformat(row["target_date"]),
+            enabled=bool(row["enabled"]),
+            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
+        )
+
+    def delete_countdown(self, countdown_id: int) -> bool:
+        """Delete a countdown."""
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM countdowns WHERE id = ?", (countdown_id,))
+        deleted = cursor.rowcount > 0
+        conn.commit()
+        conn.close()
+        return deleted

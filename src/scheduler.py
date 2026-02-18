@@ -8,7 +8,7 @@ from typing import Callable, Optional
 from croniter import croniter
 
 from .client import VestaboardClient
-from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher
+from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher, CountdownFetcher
 from .storage import Storage, ScheduledMessage
 
 
@@ -26,6 +26,7 @@ class MessageScheduler:
         self.stock_fetcher = StockFetcher()
         self.calendar_fetcher = CalendarFetcher()
         self.news_fetcher = NewsFetcher()
+        self.countdown_fetcher = CountdownFetcher(storage=self.storage)
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -73,6 +74,11 @@ class MessageScheduler:
                     lines = self.news_fetcher.format_for_board(headlines[0])
                     content = "\n".join(lines)
                     success = self.client.send_lines(lines)
+
+            elif msg.message_type == "countdowns":
+                lines = self.countdown_fetcher.format_for_board()
+                content = "\n".join(lines)
+                success = self.client.send_lines(lines)
 
             else:
                 print(f"Unknown message type: {msg.message_type}")

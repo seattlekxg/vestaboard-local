@@ -311,3 +311,81 @@ class NewsFetcher:
         lines.extend(wrapped[:4])  # Max 4 lines for headline
 
         return lines
+
+
+class CountdownFetcher:
+    """Format countdowns for display."""
+
+    def __init__(self, storage=None):
+        self.storage = storage
+
+    def get_active_countdowns(self) -> list[tuple[str, int]]:
+        """Get active countdowns with days remaining.
+
+        Returns:
+            List of (name, days_remaining) tuples, sorted by days remaining.
+        """
+        if not self.storage:
+            from .storage import Storage
+            self.storage = Storage()
+
+        countdowns = self.storage.get_countdowns(enabled_only=True, include_past=False)
+        today = date.today()
+
+        results = []
+        for countdown in countdowns:
+            days_remaining = (countdown.target_date - today).days
+            if days_remaining >= 0:
+                results.append((countdown.name, days_remaining))
+
+        # Sort by days remaining (soonest first)
+        results.sort(key=lambda x: x[1])
+        return results
+
+    def format_for_board(self, countdowns: list[tuple[str, int]] = None) -> list[str]:
+        """Format countdowns for Vestaboard display.
+
+        Args:
+            countdowns: List of (name, days_remaining) tuples.
+                       If None, fetches from storage.
+
+        Returns:
+            List of lines for the board.
+        """
+        if countdowns is None:
+            countdowns = self.get_active_countdowns()
+
+        if not countdowns:
+            return [
+                "COUNTDOWNS",
+                "",
+                "NO ACTIVE",
+                "COUNTDOWNS",
+                "",
+                "ADD ONE IN THE APP"
+            ]
+
+        lines = ["COUNTDOWNS"]
+        lines.append("")
+
+        # Show up to 4 countdowns (to fit on 6-line display)
+        for name, days in countdowns[:4]:
+            # Truncate name to fit with days count
+            # Format: "EVENT NAME    123 DAYS"
+            if days == 0:
+                day_str = "TODAY!"
+            elif days == 1:
+                day_str = "1 DAY"
+            else:
+                day_str = f"{days} DAYS"
+
+            # Calculate max name length (22 - len(day_str) - 1 space)
+            max_name_len = 22 - len(day_str) - 1
+            truncated_name = name[:max_name_len].upper()
+
+            # Pad to align days on right
+            padding = 22 - len(truncated_name) - len(day_str)
+            line = truncated_name + " " * padding + day_str
+            lines.append(line)
+
+        return lines
