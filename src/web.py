@@ -80,6 +80,7 @@ CONTROL_PANEL_HTML = """
         button.danger { background: #dc3545; }
         .btn-group { display: flex; gap: 10px; }
         .btn-group button { flex: 1; }
+        .btn-group button.schedule-btn { flex: 0; width: 50px; }
         .schedule-item {
             display: flex;
             justify-content: space-between;
@@ -192,13 +193,24 @@ CONTROL_PANEL_HTML = """
 
     <div class="card">
         <h2>Quick Actions</h2>
+        <p style="color:#666;font-size:14px;margin:0 0 10px;">Click to send now, or click the clock to schedule</p>
         <div class="btn-group">
             <button onclick="sendWeather()">Weather</button>
-            <button onclick="sendStocks()">Stocks</button>
-            <button onclick="sendCountdowns()">Countdowns</button>
-            <button onclick="sendFlights()">Flights</button>
+            <button onclick="quickSchedule('weather')" class="secondary schedule-btn" title="Schedule Weather">⏰</button>
         </div>
-        <div class="btn-group" style="margin-top:10px;">
+        <div class="btn-group" style="margin-top:8px;">
+            <button onclick="sendStocks()">Stocks</button>
+            <button onclick="quickSchedule('stocks')" class="secondary schedule-btn" title="Schedule Stocks">⏰</button>
+        </div>
+        <div class="btn-group" style="margin-top:8px;">
+            <button onclick="sendCountdowns()">Countdowns</button>
+            <button onclick="quickSchedule('countdowns')" class="secondary schedule-btn" title="Schedule Countdowns">⏰</button>
+        </div>
+        <div class="btn-group" style="margin-top:8px;">
+            <button onclick="sendFlights()">Flights</button>
+            <button onclick="quickSchedule('flights')" class="secondary schedule-btn" title="Schedule Flights">⏰</button>
+        </div>
+        <div class="btn-group" style="margin-top:15px;">
             <button onclick="clearBoard()" class="secondary">Clear Board</button>
         </div>
     </div>
@@ -619,6 +631,30 @@ CONTROL_PANEL_HTML = """
             document.getElementById('scheduleFormTitle').textContent = 'Add New Schedule';
             document.getElementById('cancelEditBtn').style.display = 'none';
             updateContentVisibility();
+        }
+
+        // Quick schedule - pre-fill form and scroll to it
+        function quickSchedule(type) {
+            cancelEdit(); // Reset form first
+
+            const typeNames = {
+                'weather': 'Daily Weather',
+                'stocks': 'Market Update',
+                'countdowns': 'Countdown Update',
+                'flights': 'Flight Status'
+            };
+
+            document.getElementById('newName').value = typeNames[type] || type;
+            document.getElementById('newType').value = type;
+            updateContentVisibility();
+
+            // Scroll to schedule form
+            document.getElementById('scheduleFormTitle').scrollIntoView({ behavior: 'smooth' });
+
+            // Highlight the form briefly
+            const card = document.getElementById('scheduleFormTitle').parentElement;
+            card.style.boxShadow = '0 0 10px #007bff';
+            setTimeout(() => { card.style.boxShadow = ''; }, 2000);
         }
 
         function updateContentVisibility() {
