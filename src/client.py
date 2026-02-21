@@ -139,7 +139,11 @@ class VestaboardClient:
                 timeout=5
             )
             if response.status_code == 200:
-                return response.json()
+                data = response.json()
+                # API returns {"message": [[...]]}
+                if isinstance(data, dict) and "message" in data:
+                    return data["message"]
+                return data
             return None
         except requests.exceptions.RequestException as e:
             print(f"Error getting current board: {e}")

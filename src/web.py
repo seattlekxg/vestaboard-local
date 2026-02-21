@@ -187,7 +187,7 @@ CONTROL_PANEL_HTML = """
         <div class="board-preview">
             <div class="board-grid" id="currentBoard"></div>
         </div>
-        <button onclick="loadCurrentBoard()" class="secondary">Refresh</button>
+        <button onclick="loadCurrentBoard()">Refresh Board</button>
     </div>
 
     <div class="card">
