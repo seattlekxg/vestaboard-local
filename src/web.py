@@ -227,18 +227,19 @@ CONTROL_PANEL_HTML = """
         <h2>Scheduled Messages</h2>
         <div id="schedules">Loading...</div>
         <hr>
-        <h3>Add New Schedule</h3>
-        <input type="text" id="newName" placeholder="Name (e.g., Morning Greeting)">
+        <h3 id="scheduleFormTitle">Add New Schedule</h3>
+        <input type="hidden" id="editScheduleId" value="">
+        <input type="text" id="newName" placeholder="Name (e.g., Morning Weather)">
         <select id="newType">
-            <option value="text">Text Message</option>
             <option value="weather">Weather</option>
             <option value="stocks">Stocks</option>
-            <option value="calendar">Calendar</option>
-            <option value="news">News</option>
             <option value="countdowns">Countdowns</option>
             <option value="flights">Flights</option>
+            <option value="calendar">Calendar</option>
+            <option value="news">News</option>
+            <option value="text">Text Message</option>
         </select>
-        <input type="text" id="newContent" placeholder="Message content (for text type)">
+        <input type="text" id="newContent" placeholder="Message content (for text type)" style="display:none;">
         <div class="time-row">
             <label>Time:</label>
             <input type="time" id="newTime" value="08:00">
@@ -253,7 +254,10 @@ CONTROL_PANEL_HTML = """
             <button type="button" class="day-btn active" data-day="6">Sat</button>
             <button type="button" class="day-btn active" data-day="0">Sun</button>
         </div>
-        <button onclick="addSchedule()">Add Schedule</button>
+        <div class="btn-group">
+            <button onclick="saveSchedule()">Save Schedule</button>
+            <button onclick="cancelEdit()" class="secondary" id="cancelEditBtn" style="display:none;">Cancel</button>
+        </div>
     </div>
 
     <div class="card">
@@ -551,23 +555,98 @@ CONTROL_PANEL_HTML = """
             return `${timeStr} · ${daysStr}`;
         }
 
+        // Parse cron to get time and days for editing
+        function parseCronForEdit(cron) {
+            const parts = cron.split(' ');
+            if (parts.length < 5) return { time: '08:00', days: ['0','1','2','3','4','5','6'] };
+
+            const minute = parts[0].padStart(2, '0');
+            const hour = parts[1].padStart(2, '0');
+            const dayOfWeek = parts[4];
+
+            const time = `${hour}:${minute}`;
+            let days;
+            if (dayOfWeek === '*') {
+                days = ['0','1','2','3','4','5','6'];
+            } else {
+                days = dayOfWeek.split(',');
+            }
+
+            return { time, days };
+        }
+
+        // Edit a schedule
+        function editSchedule(schedule) {
+            document.getElementById('editScheduleId').value = schedule.id;
+            document.getElementById('newName').value = schedule.name;
+            document.getElementById('newType').value = schedule.message_type;
+            document.getElementById('newContent').value = schedule.content || '';
+
+            // Show/hide content field
+            updateContentVisibility();
+
+            // Parse cron and set time/days
+            const { time, days } = parseCronForEdit(schedule.cron_expression);
+            document.getElementById('newTime').value = time;
+
+            // Set day buttons
+            document.querySelectorAll('#newDays .day-btn').forEach(btn => {
+                if (days.includes(btn.dataset.day)) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+
+            // Update UI
+            document.getElementById('scheduleFormTitle').textContent = 'Edit Schedule';
+            document.getElementById('cancelEditBtn').style.display = 'block';
+
+            // Scroll to form
+            document.getElementById('scheduleFormTitle').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function cancelEdit() {
+            document.getElementById('editScheduleId').value = '';
+            document.getElementById('newName').value = '';
+            document.getElementById('newType').value = 'weather';
+            document.getElementById('newContent').value = '';
+            document.getElementById('newTime').value = '08:00';
+
+            // Reset all day buttons to active
+            document.querySelectorAll('#newDays .day-btn').forEach(btn => btn.classList.add('active'));
+
+            document.getElementById('scheduleFormTitle').textContent = 'Add New Schedule';
+            document.getElementById('cancelEditBtn').style.display = 'none';
+            updateContentVisibility();
+        }
+
+        function updateContentVisibility() {
+            const type = document.getElementById('newType').value;
+            const contentField = document.getElementById('newContent');
+            contentField.style.display = type === 'text' ? 'block' : 'none';
+        }
+
         async function loadSchedules() {
             const res = await api('GET', '/schedules');
             const div = document.getElementById('schedules');
             if (!res.schedules || res.schedules.length === 0) {
-                div.innerHTML = '<p>No schedules configured.</p>';
+                div.innerHTML = '<p>No schedules configured. Add one below!</p>';
                 return;
             }
-            div.innerHTML = res.schedules.map(s => `
+            // Store schedules for editing
+            window.schedulesData = res.schedules;
+
+            div.innerHTML = res.schedules.map((s, idx) => `
                 <div class="schedule-item">
-                    <div>
+                    <div onclick="editSchedule(window.schedulesData[${idx}])" style="cursor:pointer;flex:1;">
                         <strong>${s.name}</strong><br>
                         <small>${s.message_type} · ${parseCron(s.cron_expression)}</small>
                     </div>
                     <div style="display:flex;gap:10px;align-items:center;">
                         <div class="toggle ${s.enabled ? 'active' : ''}"
-                             onclick="toggleSchedule(${s.id}, ${!s.enabled})"></div>
-                        <button onclick="deleteSchedule(${s.id})" class="danger"
+                             onclick="event.stopPropagation();toggleSchedule(${s.id}, ${!s.enabled})"></div>
+                        <button onclick="event.stopPropagation();deleteSchedule(${s.id})" class="danger"
                                 style="width:auto;padding:5px 10px;">X</button>
                     </div>
                 </div>
@@ -585,7 +664,8 @@ CONTROL_PANEL_HTML = """
             loadSchedules();
         }
 
-        async function addSchedule() {
+        async function saveSchedule() {
+            const editId = document.getElementById('editScheduleId').value;
             const name = document.getElementById('newName').value;
             const messageType = document.getElementById('newType').value;
             const content = document.getElementById('newContent').value;
@@ -619,18 +699,23 @@ CONTROL_PANEL_HTML = """
             }
             const cronExpression = `${parseInt(minute)} ${parseInt(hour)} * * ${dayExpr}`;
 
-            await api('POST', '/schedules', {
+            const data = {
                 name,
                 message_type: messageType,
-                content,
+                content: messageType === 'text' ? content : null,
                 cron_expression: cronExpression
-            });
+            };
 
-            document.getElementById('newName').value = '';
-            document.getElementById('newContent').value = '';
-            document.getElementById('newTime').value = '08:00';
-            // Reset all day buttons to active
-            document.querySelectorAll('#newDays .day-btn').forEach(btn => btn.classList.add('active'));
+            if (editId) {
+                // Update existing
+                await api('PUT', '/schedules/' + editId, data);
+            } else {
+                // Create new
+                await api('POST', '/schedules', data);
+            }
+
+            // Reset form
+            cancelEdit();
             loadSchedules();
         }
 
@@ -650,11 +735,15 @@ CONTROL_PANEL_HTML = """
         }
 
         // Day button click handlers
-        document.querySelectorAll('.day-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+        document.querySelectorAll('#newDays .day-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
                 btn.classList.toggle('active');
             });
         });
+
+        // Show/hide content field based on message type
+        document.getElementById('newType').addEventListener('change', updateContentVisibility);
 
         // Load data on page load
         initBoard();
@@ -662,6 +751,7 @@ CONTROL_PANEL_HTML = """
         loadCountdowns();
         loadFlights();
         loadLogs();
+        updateContentVisibility();
     </script>
 </body>
 </html>
