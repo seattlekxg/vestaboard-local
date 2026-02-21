@@ -115,6 +115,27 @@ CONTROL_PANEL_HTML = """
         .status { padding: 5px 10px; border-radius: 4px; font-size: 14px; }
         .status.ok { background: #d4edda; color: #155724; }
         .status.error { background: #f8d7da; color: #721c24; }
+        .day-picker { display: flex; gap: 5px; margin: 10px 0; }
+        .day-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: 2px solid #ddd;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            color: #666;
+        }
+        .day-btn.active {
+            background: #007bff;
+            border-color: #007bff;
+            color: white;
+        }
+        .day-btn:hover { border-color: #007bff; }
+        .time-row { display: flex; gap: 10px; align-items: center; }
+        .time-row input[type="time"] { flex: 1; }
+        .schedule-days { font-size: 12px; color: #666; }
     </style>
 </head>
 <body>
@@ -172,9 +193,23 @@ CONTROL_PANEL_HTML = """
             <option value="calendar">Calendar</option>
             <option value="news">News</option>
             <option value="countdowns">Countdowns</option>
+            <option value="flights">Flights</option>
         </select>
         <input type="text" id="newContent" placeholder="Message content (for text type)">
-        <input type="text" id="newCron" placeholder="Cron expression (e.g., 0 8 * * *)">
+        <div class="time-row">
+            <label>Time:</label>
+            <input type="time" id="newTime" value="08:00">
+        </div>
+        <label>Days:</label>
+        <div class="day-picker" id="newDays">
+            <button type="button" class="day-btn active" data-day="1">Mon</button>
+            <button type="button" class="day-btn active" data-day="2">Tue</button>
+            <button type="button" class="day-btn active" data-day="3">Wed</button>
+            <button type="button" class="day-btn active" data-day="4">Thu</button>
+            <button type="button" class="day-btn active" data-day="5">Fri</button>
+            <button type="button" class="day-btn active" data-day="6">Sat</button>
+            <button type="button" class="day-btn active" data-day="0">Sun</button>
+        </div>
         <button onclick="addSchedule()">Add Schedule</button>
     </div>
 
@@ -329,6 +364,38 @@ CONTROL_PANEL_HTML = """
             loadFlights();
         }
 
+        // Parse cron expression to human-readable format
+        function parseCron(cron) {
+            const parts = cron.split(' ');
+            if (parts.length < 5) return cron;
+
+            const minute = parts[0];
+            const hour = parts[1];
+            const dayOfWeek = parts[4];
+
+            // Format time
+            let h = parseInt(hour);
+            const ampm = h >= 12 ? 'PM' : 'AM';
+            h = h % 12 || 12;
+            const timeStr = `${h}:${minute.padStart(2, '0')} ${ampm}`;
+
+            // Format days
+            const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            let daysStr = '';
+            if (dayOfWeek === '*') {
+                daysStr = 'Every day';
+            } else if (dayOfWeek === '1-5') {
+                daysStr = 'Weekdays';
+            } else if (dayOfWeek === '0,6') {
+                daysStr = 'Weekends';
+            } else {
+                const days = dayOfWeek.split(',').map(d => dayNames[parseInt(d)]);
+                daysStr = days.join(', ');
+            }
+
+            return `${timeStr} · ${daysStr}`;
+        }
+
         async function loadSchedules() {
             const res = await api('GET', '/schedules');
             const div = document.getElementById('schedules');
@@ -340,7 +407,7 @@ CONTROL_PANEL_HTML = """
                 <div class="schedule-item">
                     <div>
                         <strong>${s.name}</strong><br>
-                        <small>${s.message_type} | ${s.cron_expression}</small>
+                        <small>${s.message_type} · ${parseCron(s.cron_expression)}</small>
                     </div>
                     <div style="display:flex;gap:10px;align-items:center;">
                         <div class="toggle ${s.enabled ? 'active' : ''}"
@@ -364,20 +431,51 @@ CONTROL_PANEL_HTML = """
         }
 
         async function addSchedule() {
-            const data = {
-                name: document.getElementById('newName').value,
-                message_type: document.getElementById('newType').value,
-                content: document.getElementById('newContent').value,
-                cron_expression: document.getElementById('newCron').value
-            };
-            if (!data.name || !data.cron_expression) {
-                alert('Name and cron expression are required');
+            const name = document.getElementById('newName').value;
+            const messageType = document.getElementById('newType').value;
+            const content = document.getElementById('newContent').value;
+            const time = document.getElementById('newTime').value;
+
+            if (!name) {
+                alert('Name is required');
                 return;
             }
-            await api('POST', '/schedules', data);
+            if (!time) {
+                alert('Time is required');
+                return;
+            }
+
+            // Get selected days
+            const dayBtns = document.querySelectorAll('#newDays .day-btn.active');
+            const days = Array.from(dayBtns).map(btn => btn.dataset.day);
+
+            if (days.length === 0) {
+                alert('Select at least one day');
+                return;
+            }
+
+            // Build cron expression: minute hour * * days
+            const [hour, minute] = time.split(':');
+            let dayExpr;
+            if (days.length === 7) {
+                dayExpr = '*';
+            } else {
+                dayExpr = days.sort().join(',');
+            }
+            const cronExpression = `${parseInt(minute)} ${parseInt(hour)} * * ${dayExpr}`;
+
+            await api('POST', '/schedules', {
+                name,
+                message_type: messageType,
+                content,
+                cron_expression: cronExpression
+            });
+
             document.getElementById('newName').value = '';
             document.getElementById('newContent').value = '';
-            document.getElementById('newCron').value = '';
+            document.getElementById('newTime').value = '08:00';
+            // Reset all day buttons to active
+            document.querySelectorAll('#newDays .day-btn').forEach(btn => btn.classList.add('active'));
             loadSchedules();
         }
 
@@ -395,6 +493,13 @@ CONTROL_PANEL_HTML = """
                 </div>
             `).join('');
         }
+
+        // Day button click handlers
+        document.querySelectorAll('.day-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                btn.classList.toggle('active');
+            });
+        });
 
         // Load data on page load
         loadSchedules();
