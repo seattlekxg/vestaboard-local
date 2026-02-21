@@ -136,6 +136,46 @@ CONTROL_PANEL_HTML = """
         .time-row { display: flex; gap: 10px; align-items: center; }
         .time-row input[type="time"] { flex: 1; }
         .schedule-days { font-size: 12px; color: #666; }
+
+        /* Vestaboard Preview */
+        .board-preview {
+            background: #1a1a1a;
+            border-radius: 12px;
+            padding: 15px;
+            margin: 15px 0;
+            display: inline-block;
+        }
+        .board-grid {
+            display: grid;
+            grid-template-columns: repeat(22, 1fr);
+            gap: 3px;
+        }
+        .board-cell {
+            width: 24px;
+            height: 32px;
+            background: #2a2a2a;
+            border-radius: 3px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            color: #ffd700;
+        }
+        .board-cell.color-red { background: #ff4444; color: #fff; }
+        .board-cell.color-orange { background: #ff8c00; color: #fff; }
+        .board-cell.color-yellow { background: #ffd700; color: #1a1a1a; }
+        .board-cell.color-green { background: #44aa44; color: #fff; }
+        .board-cell.color-blue { background: #4488ff; color: #fff; }
+        .board-cell.color-violet { background: #9944ff; color: #fff; }
+        .board-cell.color-white { background: #ffffff; color: #1a1a1a; }
+        .board-cell.filled { background: #ffd700; }
+        @media (max-width: 600px) {
+            .board-cell { width: 12px; height: 16px; font-size: 8px; }
+            .board-preview { padding: 8px; }
+            .board-grid { gap: 2px; }
+        }
     </style>
 </head>
 <body>
@@ -143,7 +183,10 @@ CONTROL_PANEL_HTML = """
 
     <div class="card">
         <h2>Send Message</h2>
-        <textarea id="message" rows="4" placeholder="Type your message..."></textarea>
+        <textarea id="message" rows="4" placeholder="Type your message..." oninput="updatePreview()"></textarea>
+        <div class="board-preview">
+            <div class="board-grid" id="boardPreview"></div>
+        </div>
         <button onclick="sendMessage()">Send to Vestaboard</button>
     </div>
 
@@ -219,6 +262,118 @@ CONTROL_PANEL_HTML = """
     </div>
 
     <script>
+        // Character code mapping (matches Python characters.py)
+        const CHAR_CODES = {
+            ' ': 0,
+            'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'H': 8, 'I': 9,
+            'J': 10, 'K': 11, 'L': 12, 'M': 13, 'N': 14, 'O': 15, 'P': 16, 'Q': 17,
+            'R': 18, 'S': 19, 'T': 20, 'U': 21, 'V': 22, 'W': 23, 'X': 24, 'Y': 25,
+            'Z': 26,
+            '1': 27, '2': 28, '3': 29, '4': 30, '5': 31, '6': 32, '7': 33, '8': 34,
+            '9': 35, '0': 36,
+            '!': 37, '@': 38, '#': 39, '$': 40, '(': 41, ')': 42,
+            '-': 44, '+': 46, '&': 47, '=': 48, ';': 49, ':': 50,
+            "'": 52, '"': 53, '%': 54, ',': 55, '.': 56,
+            '/': 59, '?': 60, '°': 62
+        };
+
+        const CODE_TO_CHAR = {};
+        for (const [char, code] of Object.entries(CHAR_CODES)) {
+            CODE_TO_CHAR[code] = char;
+        }
+
+        const ROWS = 6;
+        const COLS = 22;
+
+        function wrapText(text, width = COLS) {
+            const words = text.split(/\s+/).filter(w => w);
+            const lines = [];
+            let currentLine = [];
+            let currentLength = 0;
+
+            for (const word of words) {
+                const wordLength = word.length;
+                const spaceNeeded = currentLine.length > 0 ? 1 : 0;
+
+                if (currentLength + wordLength + spaceNeeded <= width) {
+                    currentLine.push(word);
+                    currentLength += wordLength + spaceNeeded;
+                } else {
+                    if (currentLine.length > 0) {
+                        lines.push(currentLine.join(' '));
+                    }
+                    currentLine = [word.substring(0, width)];
+                    currentLength = Math.min(word.length, width);
+                }
+            }
+
+            if (currentLine.length > 0) {
+                lines.push(currentLine.join(' '));
+            }
+
+            return lines;
+        }
+
+        function textToBoard(text) {
+            const board = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+            const lines = wrapText(text.toUpperCase());
+
+            // Vertical centering
+            const startRow = Math.floor((ROWS - Math.min(lines.length, ROWS)) / 2);
+
+            for (let i = 0; i < Math.min(lines.length, ROWS); i++) {
+                const line = lines[i].substring(0, COLS);
+                const padding = Math.floor((COLS - line.length) / 2);
+
+                for (let j = 0; j < line.length; j++) {
+                    const char = line[j];
+                    const code = CHAR_CODES[char] !== undefined ? CHAR_CODES[char] : 0;
+                    board[startRow + i][padding + j] = code;
+                }
+            }
+
+            return board;
+        }
+
+        function renderBoard(board, containerId) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = '';
+
+            for (let row = 0; row < ROWS; row++) {
+                for (let col = 0; col < COLS; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'board-cell';
+
+                    const code = board[row][col];
+                    const char = CODE_TO_CHAR[code] || '';
+
+                    // Handle special color codes
+                    if (code >= 63 && code <= 70) {
+                        const colors = ['red', 'orange', 'yellow', 'green', 'blue', 'violet', 'white', 'black'];
+                        cell.classList.add('color-' + colors[code - 63]);
+                    } else if (code === 71) {
+                        cell.classList.add('filled');
+                    } else {
+                        cell.textContent = char;
+                    }
+
+                    container.appendChild(cell);
+                }
+            }
+        }
+
+        function updatePreview() {
+            const text = document.getElementById('message').value;
+            const board = textToBoard(text);
+            renderBoard(board, 'boardPreview');
+        }
+
+        // Initialize empty board
+        function initBoard() {
+            const emptyBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
+            renderBoard(emptyBoard, 'boardPreview');
+        }
+
         async function api(method, endpoint, data = null) {
             const opts = { method, headers: { 'Content-Type': 'application/json' } };
             if (data) opts.body = JSON.stringify(data);
@@ -502,6 +657,7 @@ CONTROL_PANEL_HTML = """
         });
 
         // Load data on page load
+        initBoard();
         loadSchedules();
         loadCountdowns();
         loadFlights();
