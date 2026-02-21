@@ -182,8 +182,13 @@ class StockFetcher:
 
         for stock in stocks[:4]:  # Max 4 stocks to fit
             sign = "+" if stock.change >= 0 else ""
+            # Show cents for prices under $10, whole numbers for $10+
+            if stock.price < 10:
+                price_str = f"${stock.price:.2f}"
+            else:
+                price_str = f"${stock.price:.0f}"
             lines.append(
-                f"{stock.symbol} ${stock.price:.0f} {sign}{stock.change_percent:.1f}%"
+                f"{stock.symbol} {price_str} {sign}{stock.change_percent:.1f}%"
             )
 
         return lines
