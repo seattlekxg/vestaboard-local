@@ -193,6 +193,21 @@ CONTROL_PANEL_HTML = """
     <div class="card">
         <h2>Send Message</h2>
         <textarea id="message" rows="4" placeholder="Type your message..." oninput="updatePreview()"></textarea>
+        <details style="margin:10px 0;font-size:13px;">
+            <summary style="cursor:pointer;color:#007bff;">Special characters (click to expand)</summary>
+            <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:8px;">
+                <span style="background:#ff4444;color:white;padding:3px 8px;border-radius:3px;">{RED}</span>
+                <span style="background:#ff8c00;color:white;padding:3px 8px;border-radius:3px;">{ORANGE}</span>
+                <span style="background:#ffd700;color:black;padding:3px 8px;border-radius:3px;">{YELLOW}</span>
+                <span style="background:#44aa44;color:white;padding:3px 8px;border-radius:3px;">{GREEN}</span>
+                <span style="background:#4488ff;color:white;padding:3px 8px;border-radius:3px;">{BLUE}</span>
+                <span style="background:#9944ff;color:white;padding:3px 8px;border-radius:3px;">{VIOLET}</span>
+                <span style="background:#ffffff;color:black;padding:3px 8px;border-radius:3px;border:1px solid #ccc;">{WHITE}</span>
+                <span style="background:#1a1a1a;color:white;padding:3px 8px;border-radius:3px;">{BLACK}</span>
+                <span style="background:#ffd700;color:black;padding:3px 8px;border-radius:3px;">█ = {BLOCK}</span>
+            </div>
+            <p style="color:#666;margin-top:8px;">Type these codes in your message to add colored tiles. Example: "{RED}{RED}{RED} ALERT {RED}{RED}{RED}"</p>
+        </details>
         <p style="color:#666;font-size:12px;margin:5px 0;">Preview:</p>
         <div class="board-preview">
             <div class="board-grid" id="boardPreview"></div>
@@ -314,13 +329,74 @@ CONTROL_PANEL_HTML = """
             '/': 59, '?': 60, '°': 62
         };
 
+        // Special color/block codes
+        const SPECIAL_CODES = {
+            '{RED}': 63, '{ORANGE}': 64, '{YELLOW}': 65, '{GREEN}': 66,
+            '{BLUE}': 67, '{VIOLET}': 68, '{WHITE}': 69, '{BLACK}': 70,
+            '{BLOCK}': 71
+        };
+
         const CODE_TO_CHAR = {};
         for (const [char, code] of Object.entries(CHAR_CODES)) {
             CODE_TO_CHAR[code] = char;
         }
+        // Special codes display as empty (color fills the tile)
+        for (const code of Object.values(SPECIAL_CODES)) {
+            CODE_TO_CHAR[code] = '';
+        }
 
         const ROWS = 6;
         const COLS = 22;
+
+        // Parse text and extract special codes, returning array of {char, code} objects
+        function parseTextWithCodes(text) {
+            const result = [];
+            let i = 0;
+            const upperText = text.toUpperCase();
+
+            while (i < upperText.length) {
+                // Check for special codes
+                let foundSpecial = false;
+                for (const [code, value] of Object.entries(SPECIAL_CODES)) {
+                    if (upperText.substring(i).startsWith(code)) {
+                        result.push({ char: '', code: value });
+                        i += code.length;
+                        foundSpecial = true;
+                        break;
+                    }
+                }
+                if (!foundSpecial) {
+                    const char = upperText[i];
+                    const code = CHAR_CODES[char] !== undefined ? CHAR_CODES[char] : 0;
+                    result.push({ char, code });
+                    i++;
+                }
+            }
+            return result;
+        }
+
+        // Calculate display length (special codes count as 1 character)
+        function getDisplayLength(text) {
+            let len = 0;
+            let i = 0;
+            const upperText = text.toUpperCase();
+            while (i < upperText.length) {
+                let foundSpecial = false;
+                for (const code of Object.keys(SPECIAL_CODES)) {
+                    if (upperText.substring(i).startsWith(code)) {
+                        len++;
+                        i += code.length;
+                        foundSpecial = true;
+                        break;
+                    }
+                }
+                if (!foundSpecial) {
+                    len++;
+                    i++;
+                }
+            }
+            return len;
+        }
 
         function wrapText(text, width = COLS) {
             const words = text.split(/\s+/).filter(w => w);
@@ -329,7 +405,7 @@ CONTROL_PANEL_HTML = """
             let currentLength = 0;
 
             for (const word of words) {
-                const wordLength = word.length;
+                const wordLength = getDisplayLength(word);
                 const spaceNeeded = currentLine.length > 0 ? 1 : 0;
 
                 if (currentLength + wordLength + spaceNeeded <= width) {
@@ -339,8 +415,8 @@ CONTROL_PANEL_HTML = """
                     if (currentLine.length > 0) {
                         lines.push(currentLine.join(' '));
                     }
-                    currentLine = [word.substring(0, width)];
-                    currentLength = Math.min(word.length, width);
+                    currentLine = [word];
+                    currentLength = wordLength;
                 }
             }
 
@@ -353,19 +429,18 @@ CONTROL_PANEL_HTML = """
 
         function textToBoard(text) {
             const board = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
-            const lines = wrapText(text.toUpperCase());
+            const lines = wrapText(text);
 
             // Vertical centering
             const startRow = Math.floor((ROWS - Math.min(lines.length, ROWS)) / 2);
 
             for (let i = 0; i < Math.min(lines.length, ROWS); i++) {
-                const line = lines[i].substring(0, COLS);
-                const padding = Math.floor((COLS - line.length) / 2);
+                const parsed = parseTextWithCodes(lines[i]);
+                const displayLen = parsed.length;
+                const padding = Math.floor((COLS - Math.min(displayLen, COLS)) / 2);
 
-                for (let j = 0; j < line.length; j++) {
-                    const char = line[j];
-                    const code = CHAR_CODES[char] !== undefined ? CHAR_CODES[char] : 0;
-                    board[startRow + i][padding + j] = code;
+                for (let j = 0; j < Math.min(parsed.length, COLS); j++) {
+                    board[startRow + i][padding + j] = parsed[j].code;
                 }
             }
 

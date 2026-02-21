@@ -4,6 +4,8 @@ The Vestaboard uses a 6-row by 22-column display.
 Each character is represented by a numeric code.
 """
 
+import re
+
 # Character code mapping
 CHAR_CODES = {
     " ": 0,
@@ -17,12 +19,25 @@ CHAR_CODES = {
     "-": 44, "+": 46, "&": 47, "=": 48, ";": 49, ":": 50,
     "'": 52, '"': 53, "%": 54, ",": 55, ".": 56,
     "/": 59, "?": 60, "°": 62,
-    # Special colors
-    "RED": 63, "ORANGE": 64, "YELLOW": 65, "GREEN": 66,
-    "BLUE": 67, "VIOLET": 68, "WHITE": 69, "BLACK": 70,
     # Poppet character (filled square)
     "█": 71,
 }
+
+# Special codes that can be used in text with {CODE} syntax
+SPECIAL_CODES = {
+    "RED": 63,
+    "ORANGE": 64,
+    "YELLOW": 65,
+    "GREEN": 66,
+    "BLUE": 67,
+    "VIOLET": 68,
+    "WHITE": 69,
+    "BLACK": 70,
+    "BLOCK": 71,
+}
+
+# Pattern to match special codes like {RED}, {BLUE}, etc.
+SPECIAL_CODE_PATTERN = re.compile(r'\{(' + '|'.join(SPECIAL_CODES.keys()) + r')\}', re.IGNORECASE)
 
 # Reverse lookup
 CODE_TO_CHAR = {v: k for k, v in CHAR_CODES.items()}
@@ -35,6 +50,8 @@ COLS = 22
 def text_to_codes(text: str) -> list[int]:
     """Convert text string to list of character codes.
 
+    Supports special codes like {RED}, {BLUE}, {BLOCK}, etc.
+
     Args:
         text: Text to convert (will be uppercased).
 
@@ -43,13 +60,46 @@ def text_to_codes(text: str) -> list[int]:
     """
     codes = []
     text = text.upper()
-    for char in text:
+    i = 0
+
+    while i < len(text):
+        # Check for special code pattern like {RED}
+        if text[i] == '{':
+            match = SPECIAL_CODE_PATTERN.match(text, i)
+            if match:
+                code_name = match.group(1).upper()
+                codes.append(SPECIAL_CODES[code_name])
+                i = match.end()
+                continue
+
+        # Regular character
+        char = text[i]
         if char in CHAR_CODES:
             codes.append(CHAR_CODES[char])
         else:
             # Unknown character becomes space
             codes.append(0)
+        i += 1
+
     return codes
+
+
+def get_display_length(text: str) -> int:
+    """Get the display length of text (accounting for special codes).
+
+    Special codes like {RED} take up 1 cell on the board.
+
+    Args:
+        text: Text to measure.
+
+    Returns:
+        Number of cells the text will occupy.
+    """
+    # Remove special codes and count their occurrences
+    special_count = len(SPECIAL_CODE_PATTERN.findall(text))
+    # Remove special codes from text to get regular chars
+    text_without_special = SPECIAL_CODE_PATTERN.sub('', text)
+    return len(text_without_special) + special_count
 
 
 def create_board(lines: list[str], center: bool = True) -> list[list[int]]:
@@ -65,10 +115,12 @@ def create_board(lines: list[str], center: bool = True) -> list[list[int]]:
     board = [[0] * COLS for _ in range(ROWS)]
 
     for row_idx, line in enumerate(lines[:ROWS]):
-        codes = text_to_codes(line[:COLS])
+        codes = text_to_codes(line)
+        # Truncate to fit display
+        codes = codes[:COLS]
 
         if center:
-            # Center the text
+            # Center the text based on actual display length
             padding = (COLS - len(codes)) // 2
             start_col = padding
         else:
@@ -84,6 +136,8 @@ def create_board(lines: list[str], center: bool = True) -> list[list[int]]:
 def wrap_text(text: str, width: int = COLS) -> list[str]:
     """Wrap text to fit within specified width.
 
+    Accounts for special codes like {RED} which take 1 cell on the board.
+
     Args:
         text: Text to wrap.
         width: Maximum characters per line.
@@ -97,7 +151,8 @@ def wrap_text(text: str, width: int = COLS) -> list[str]:
     current_length = 0
 
     for word in words:
-        word_length = len(word)
+        # Use display length for special codes
+        word_length = get_display_length(word)
 
         if current_length + word_length + (1 if current_line else 0) <= width:
             current_line.append(word)
