@@ -349,6 +349,9 @@ class CountdownFetcher:
     def format_for_board(self, countdowns: list[tuple[str, int]] = None) -> list[str]:
         """Format countdowns for Vestaboard display.
 
+        Shows up to 6 countdowns (one per line), with event name on the left
+        and days remaining on the right.
+
         Args:
             countdowns: List of (name, days_remaining) tuples.
                        If None, fetches from storage.
@@ -361,36 +364,38 @@ class CountdownFetcher:
 
         if not countdowns:
             return [
-                "COUNTDOWNS",
                 "",
-                "NO ACTIVE",
-                "COUNTDOWNS",
+                "NO COUNTDOWNS",
                 "",
-                "ADD ONE IN THE APP"
+                "ADD EVENTS IN",
+                "THE CONTROL PANEL",
+                ""
             ]
 
-        lines = ["COUNTDOWNS"]
-        lines.append("")
+        lines = []
 
-        # Show up to 4 countdowns (to fit on 6-line display)
-        for name, days in countdowns[:4]:
-            # Truncate name to fit with days count
-            # Format: "EVENT NAME    123 DAYS"
+        # Show up to 6 countdowns (one per line, fills entire board)
+        for name, days in countdowns[:6]:
+            # Format days string (right side)
             if days == 0:
                 day_str = "TODAY!"
             elif days == 1:
                 day_str = "1 DAY"
             else:
-                day_str = f"{days} DAYS"
+                day_str = f"{days}D"
 
-            # Calculate max name length (22 - len(day_str) - 1 space)
+            # Calculate max name length (22 - len(day_str) - 1 space minimum)
             max_name_len = 22 - len(day_str) - 1
             truncated_name = name[:max_name_len].upper()
 
-            # Pad to align days on right
+            # Pad to align: name on left, days on right
             padding = 22 - len(truncated_name) - len(day_str)
             line = truncated_name + " " * padding + day_str
             lines.append(line)
+
+        # Pad with empty lines if fewer than 6 countdowns
+        while len(lines) < 6:
+            lines.append("")
 
         return lines
 
