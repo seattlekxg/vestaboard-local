@@ -230,30 +230,14 @@ class MessageScheduler:
                 name="Market Open",
                 message_type="stocks",
                 content=None,
-                cron_expression="30 9 * * 1-5",  # 9:30 AM weekdays
+                cron_expression="0 9 * * 1-5",  # 9:00 AM weekdays
                 enabled=True
             ),
             ScheduledMessage(
                 id=None,
-                name="Daily Calendar",
-                message_type="calendar",
+                name="Evening Countdowns",
+                message_type="countdowns",
                 content=None,
-                cron_expression="0 8 * * *",  # 8:00 AM daily
-                enabled=False  # Disabled by default (needs calendar URL)
-            ),
-            ScheduledMessage(
-                id=None,
-                name="Good Morning",
-                message_type="text",
-                content="Good Morning!",
-                cron_expression="0 6 * * *",  # 6:00 AM daily
-                enabled=True
-            ),
-            ScheduledMessage(
-                id=None,
-                name="Good Night",
-                message_type="text",
-                content="Good Night!",
                 cron_expression="0 22 * * *",  # 10:00 PM daily
                 enabled=True
             ),
