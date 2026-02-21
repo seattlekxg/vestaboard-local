@@ -4,8 +4,12 @@ import requests
 from datetime import datetime, date
 from typing import Optional
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 from .config import config
+
+# Default timezone for display
+LOCAL_TZ = ZoneInfo("America/Los_Angeles")
 
 
 @dataclass
@@ -563,12 +567,22 @@ class FlightFetcher:
         lines.append("")
 
         # Lines 4-5: Status specific info
-        now = datetime.now(flight_status.scheduled_departure.tzinfo if flight_status.scheduled_departure else None)
+        # Convert times to local timezone for display
+        now = datetime.now(LOCAL_TZ)
+
+        def to_local(dt):
+            """Convert datetime to local timezone."""
+            if dt is None:
+                return None
+            if dt.tzinfo is not None:
+                return dt.astimezone(LOCAL_TZ)
+            return dt
 
         if flight_status.status == "active":
             # In flight - show time remaining
-            if flight_status.scheduled_arrival:
-                remaining = flight_status.scheduled_arrival - now
+            local_arrival = to_local(flight_status.scheduled_arrival)
+            if local_arrival:
+                remaining = local_arrival - now
                 hours = int(remaining.total_seconds() // 3600)
                 minutes = int((remaining.total_seconds() % 3600) // 60)
                 if hours > 0:
@@ -581,8 +595,9 @@ class FlightFetcher:
 
         elif flight_status.status == "landed":
             lines.append("LANDED")
-            if flight_status.actual_arrival:
-                arr_time = flight_status.actual_arrival.strftime("%I:%M %p").lstrip("0")
+            local_arr = to_local(flight_status.actual_arrival)
+            if local_arr:
+                arr_time = local_arr.strftime("%I:%M %p").lstrip("0")
                 lines.append(f"ARRIVED {arr_time}")
             else:
                 lines.append("")
@@ -597,8 +612,9 @@ class FlightFetcher:
 
         elif flight_status.status in ["scheduled", "unknown"]:
             # Show time until departure
-            if flight_status.scheduled_departure:
-                time_until = flight_status.scheduled_departure - now
+            local_dep = to_local(flight_status.scheduled_departure)
+            if local_dep:
+                time_until = local_dep - now
                 total_seconds = time_until.total_seconds()
 
                 if total_seconds > 0:
@@ -614,7 +630,7 @@ class FlightFetcher:
                 else:
                     lines.append("DEPARTED")
 
-                dep_time = flight_status.scheduled_departure.strftime("%I:%M %p").lstrip("0")
+                dep_time = local_dep.strftime("%I:%M %p").lstrip("0")
                 lines.append(f"AT {dep_time}")
             else:
                 lines.append("SCHEDULED")
