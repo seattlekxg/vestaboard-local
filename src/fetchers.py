@@ -113,6 +113,17 @@ class WeatherFetcher:
 class StockFetcher:
     """Fetch stock data from Yahoo Finance."""
 
+    def __init__(self, storage=None):
+        self.storage = storage
+
+    def get_symbols(self) -> list[str]:
+        """Get stock symbols from database or config."""
+        if self.storage:
+            saved = self.storage.get_setting("stock_symbols")
+            if saved:
+                return [s.strip() for s in saved.split(",") if s.strip()]
+        return config.stock_symbols or []
+
     def fetch(self, symbol: str) -> Optional[StockData]:
         """Fetch stock data for a symbol.
 
@@ -152,7 +163,7 @@ class StockFetcher:
         Returns:
             List of StockData.
         """
-        symbols = symbols or config.stock_symbols
+        symbols = symbols or self.get_symbols()
         results = []
         for symbol in symbols:
             data = self.fetch(symbol)

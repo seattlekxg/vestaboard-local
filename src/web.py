@@ -216,6 +216,18 @@ CONTROL_PANEL_HTML = """
     </div>
 
     <div class="card">
+        <h2>Stocks</h2>
+        <p style="color:#666;font-size:14px;margin:0 0 10px;">Symbols to display when Stocks is shown</p>
+        <div id="stocksList">Loading...</div>
+        <hr>
+        <h3>Add Stock Symbol</h3>
+        <div class="btn-group">
+            <input type="text" id="newStock" placeholder="Symbol (e.g., AAPL, MSFT)" style="text-transform:uppercase;">
+            <button onclick="addStock()" style="width:100px;">Add</button>
+        </div>
+    </div>
+
+    <div class="card">
         <h2>Countdowns</h2>
         <div id="countdowns">Loading...</div>
         <hr>
@@ -433,6 +445,36 @@ CONTROL_PANEL_HTML = """
         async function clearBoard() {
             const res = await api('POST', '/clear');
             alert(res.success ? 'Cleared!' : 'Failed');
+        }
+
+        async function loadStocks() {
+            const res = await api('GET', '/stocks/symbols');
+            const div = document.getElementById('stocksList');
+            if (!res.symbols || res.symbols.length === 0) {
+                div.innerHTML = '<p>No stocks configured.</p>';
+                return;
+            }
+            div.innerHTML = res.symbols.map(s => `
+                <span style="display:inline-block;background:#e9ecef;padding:5px 10px;margin:3px;border-radius:4px;">
+                    <strong>${s}</strong>
+                    <button onclick="removeStock('${s}')" style="background:none;border:none;color:#dc3545;cursor:pointer;padding:0 5px;">×</button>
+                </span>
+            `).join('');
+        }
+
+        async function addStock() {
+            const input = document.getElementById('newStock');
+            const symbol = input.value.trim().toUpperCase();
+            if (!symbol) return;
+
+            await api('POST', '/stocks/symbols', { symbol });
+            input.value = '';
+            loadStocks();
+        }
+
+        async function removeStock(symbol) {
+            await api('DELETE', '/stocks/symbols/' + symbol);
+            loadStocks();
         }
 
         async function loadCountdowns() {
@@ -783,6 +825,7 @@ CONTROL_PANEL_HTML = """
 
         // Load data on page load
         initBoard();
+        loadStocks();
         loadSchedules();
         loadCountdowns();
         loadFlights();
@@ -846,7 +889,7 @@ def api_send_weather():
 @app.route("/api/message/stocks", methods=["POST"])
 def api_send_stocks():
     """Send stock prices to the Vestaboard."""
-    fetcher = StockFetcher()
+    fetcher = StockFetcher(storage=storage)
     stocks = fetcher.fetch_multiple()
 
     if not stocks:
@@ -888,6 +931,64 @@ def api_clear():
     success = client.clear()
     storage.log_message("clear", "", success)
     return jsonify({"success": success})
+
+
+# ========== Stock Symbols ==========
+
+@app.route("/api/stocks/symbols", methods=["GET"])
+def api_get_stock_symbols():
+    """Get configured stock symbols."""
+    # First check database, then fall back to config
+    saved = storage.get_setting("stock_symbols")
+    if saved:
+        symbols = [s.strip() for s in saved.split(",") if s.strip()]
+    else:
+        symbols = config.stock_symbols or []
+    return jsonify({"symbols": symbols})
+
+
+@app.route("/api/stocks/symbols", methods=["POST"])
+def api_add_stock_symbol():
+    """Add a stock symbol."""
+    data = request.get_json() or {}
+    symbol = data.get("symbol", "").strip().upper()
+
+    if not symbol:
+        return jsonify({"success": False, "error": "Symbol required"}), 400
+
+    # Get current symbols
+    saved = storage.get_setting("stock_symbols")
+    if saved:
+        symbols = [s.strip() for s in saved.split(",") if s.strip()]
+    else:
+        symbols = list(config.stock_symbols or [])
+
+    # Add if not already present
+    if symbol not in symbols:
+        symbols.append(symbol)
+        storage.set_setting("stock_symbols", ",".join(symbols))
+
+    return jsonify({"success": True, "symbols": symbols})
+
+
+@app.route("/api/stocks/symbols/<symbol>", methods=["DELETE"])
+def api_remove_stock_symbol(symbol: str):
+    """Remove a stock symbol."""
+    symbol = symbol.strip().upper()
+
+    # Get current symbols
+    saved = storage.get_setting("stock_symbols")
+    if saved:
+        symbols = [s.strip() for s in saved.split(",") if s.strip()]
+    else:
+        symbols = list(config.stock_symbols or [])
+
+    # Remove if present
+    if symbol in symbols:
+        symbols.remove(symbol)
+        storage.set_setting("stock_symbols", ",".join(symbols))
+
+    return jsonify({"success": True, "symbols": symbols})
 
 
 # ========== Webhook Endpoint ==========
