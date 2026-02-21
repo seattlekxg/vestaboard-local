@@ -183,8 +183,17 @@ CONTROL_PANEL_HTML = """
     <h1>Vestaboard Control</h1>
 
     <div class="card">
+        <h2>Current Board</h2>
+        <div class="board-preview">
+            <div class="board-grid" id="currentBoard"></div>
+        </div>
+        <button onclick="loadCurrentBoard()" class="secondary">Refresh</button>
+    </div>
+
+    <div class="card">
         <h2>Send Message</h2>
         <textarea id="message" rows="4" placeholder="Type your message..." oninput="updatePreview()"></textarea>
+        <p style="color:#666;font-size:12px;margin:5px 0;">Preview:</p>
         <div class="board-preview">
             <div class="board-grid" id="boardPreview"></div>
         </div>
@@ -400,6 +409,21 @@ CONTROL_PANEL_HTML = """
         function initBoard() {
             const emptyBoard = Array(ROWS).fill(null).map(() => Array(COLS).fill(0));
             renderBoard(emptyBoard, 'boardPreview');
+            renderBoard(emptyBoard, 'currentBoard');
+        }
+
+        // Load current board from Vestaboard
+        async function loadCurrentBoard() {
+            try {
+                const res = await api('GET', '/board/current');
+                if (res.board) {
+                    renderBoard(res.board, 'currentBoard');
+                } else {
+                    console.log('Could not load current board');
+                }
+            } catch (e) {
+                console.error('Error loading current board:', e);
+            }
         }
 
         async function api(method, endpoint, data = null) {
@@ -825,6 +849,7 @@ CONTROL_PANEL_HTML = """
 
         // Load data on page load
         initBoard();
+        loadCurrentBoard();
         loadStocks();
         loadSchedules();
         loadCountdowns();
@@ -853,6 +878,15 @@ def api_status():
         "connected": connected,
         "scheduler_running": scheduler._running if scheduler else False
     })
+
+
+@app.route("/api/board/current", methods=["GET"])
+def api_get_current_board():
+    """Get the current board state from Vestaboard."""
+    board = client.get_current_board()
+    if board:
+        return jsonify({"board": board})
+    return jsonify({"board": None, "error": "Could not fetch current board"})
 
 
 @app.route("/api/message", methods=["POST"])
