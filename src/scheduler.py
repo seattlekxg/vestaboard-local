@@ -2,7 +2,7 @@
 
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, date
 from typing import Callable, Optional
 
 from croniter import croniter
@@ -10,6 +10,9 @@ from croniter import croniter
 from .client import VestaboardClient
 from .fetchers import WeatherFetcher, StockFetcher, CalendarFetcher, NewsFetcher, CountdownFetcher, FlightFetcher
 from .storage import Storage, ScheduledMessage
+
+# Flight statuses that indicate the flight is complete
+COMPLETED_STATUSES = ["landed", "cancelled", "diverted"]
 
 
 class MessageScheduler:
@@ -31,6 +34,8 @@ class MessageScheduler:
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._flight_thread: Optional[threading.Thread] = None
+        self._last_flight_status: dict = {}  # Track last known status per flight
 
     def execute_message(self, msg: ScheduledMessage) -> bool:
         """Execute a scheduled message.
@@ -117,6 +122,57 @@ class MessageScheduler:
             except Exception as e:
                 print(f"Error checking schedule for {msg.name}: {e}")
 
+    def check_active_flights(self):
+        """Check for active flights and update the board if status changes."""
+        today = date.today()
+        flights = self.storage.get_flights(enabled_only=True, include_past=False)
+
+        for flight in flights:
+            # Only check today's flights
+            if flight.flight_date != today:
+                continue
+
+            try:
+                # Fetch current status
+                status = self.flight_fetcher.fetch(flight.flight_number, flight.flight_date)
+                if not status:
+                    continue
+
+                flight_key = f"{flight.flight_number}_{flight.flight_date}"
+                last_status = self._last_flight_status.get(flight_key)
+
+                # Check if status changed or first check
+                if last_status != status.status:
+                    print(f"Flight {flight.flight_number} status: {status.status}")
+
+                    # Update the board with flight info
+                    lines = self.flight_fetcher.format_for_board(status, flight)
+                    success = self.client.send_lines(lines)
+                    self.storage.log_message("flight_auto", "\n".join(lines), success)
+
+                    # Remember this status
+                    self._last_flight_status[flight_key] = status.status
+
+                    # Stop tracking if flight is complete
+                    if status.status in COMPLETED_STATUSES:
+                        print(f"Flight {flight.flight_number} complete ({status.status})")
+
+            except Exception as e:
+                print(f"Error checking flight {flight.flight_number}: {e}")
+
+    def _flight_tracker_loop(self):
+        """Background loop for flight tracking (runs every 10 minutes)."""
+        while self._running:
+            try:
+                self.check_active_flights()
+            except Exception as e:
+                print(f"Flight tracker error: {e}")
+            # Sleep for 10 minutes (600 seconds)
+            for _ in range(600):
+                if not self._running:
+                    break
+                time.sleep(1)
+
     def start(self, check_interval: int = 60):
         """Start the scheduler in a background thread.
 
@@ -140,11 +196,18 @@ class MessageScheduler:
         self._thread.start()
         print(f"Scheduler started (checking every {check_interval}s)")
 
+        # Start flight tracker thread
+        self._flight_thread = threading.Thread(target=self._flight_tracker_loop, daemon=True)
+        self._flight_thread.start()
+        print("Flight tracker started (checking every 10 minutes)")
+
     def stop(self):
         """Stop the scheduler."""
         self._running = False
         if self._thread:
             self._thread.join(timeout=5)
+        if self._flight_thread:
+            self._flight_thread.join(timeout=5)
         print("Scheduler stopped")
 
     def add_default_schedules(self):
