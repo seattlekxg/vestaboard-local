@@ -443,10 +443,10 @@ class FlightStatus:
 
 
 class FlightFetcher:
-    """Fetch flight status from AviationStack API."""
+    """Fetch flight status from AirLabs API."""
 
     def __init__(self, api_key: Optional[str] = None, storage=None):
-        self.api_key = api_key or config.aviationstack_api_key
+        self.api_key = api_key or config.airlabs_api_key
         self.storage = storage
 
     def fetch(self, flight_number: str, flight_date: date = None) -> Optional[FlightStatus]:
@@ -460,24 +460,21 @@ class FlightFetcher:
             FlightStatus or None if not found.
         """
         if not self.api_key:
-            print("AviationStack API key not configured")
+            print("AirLabs API key not configured")
             return None
 
         # Clean up flight number
         flight_number = flight_number.upper().replace(" ", "")
 
         try:
+            # First try the schedules endpoint for future/scheduled flights
             params = {
-                "access_key": self.api_key,
+                "api_key": self.api_key,
                 "flight_iata": flight_number,
             }
 
-            # Add date filter if provided
-            if flight_date:
-                params["flight_date"] = flight_date.isoformat()
-
             response = requests.get(
-                "http://api.aviationstack.com/v1/flights",
+                "https://airlabs.co/api/v9/schedules",
                 params=params,
                 timeout=15
             )
@@ -485,10 +482,21 @@ class FlightFetcher:
             data = response.json()
 
             if "error" in data:
-                print(f"AviationStack error: {data['error']}")
+                print(f"AirLabs error: {data['error']}")
                 return None
 
-            flights = data.get("data", [])
+            flights = data.get("response", [])
+
+            # Filter by date if provided
+            if flight_date and flights:
+                matching = []
+                for f in flights:
+                    dep_time = f.get("dep_time", "")
+                    if dep_time and dep_time.startswith(flight_date.isoformat()):
+                        matching.append(f)
+                if matching:
+                    flights = matching
+
             if not flights:
                 print(f"No flight found for {flight_number}")
                 return None
@@ -496,43 +504,70 @@ class FlightFetcher:
             # Get the first matching flight
             flight = flights[0]
 
-            # Parse departure info
-            departure = flight.get("departure", {})
-            arrival = flight.get("arrival", {})
-
-            # Parse times
+            # Parse times (AirLabs format: "2024-01-15 08:00")
             def parse_time(time_str):
                 if not time_str:
                     return None
                 try:
-                    return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+                    # Try parsing with timezone info first
+                    if "+" in time_str or "Z" in time_str:
+                        return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+                    # Parse local time and assume it's in local timezone
+                    dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
+                    return dt.replace(tzinfo=LOCAL_TZ)
                 except:
-                    return None
+                    try:
+                        dt = datetime.fromisoformat(time_str)
+                        return dt.replace(tzinfo=LOCAL_TZ)
+                    except:
+                        return None
 
-            scheduled_dep = parse_time(departure.get("scheduled"))
-            actual_dep = parse_time(departure.get("actual"))
-            scheduled_arr = parse_time(arrival.get("scheduled"))
-            actual_arr = parse_time(arrival.get("actual"))
+            scheduled_dep = parse_time(flight.get("dep_time"))
+            scheduled_arr = parse_time(flight.get("arr_time"))
+
+            # AirLabs uses dep_delayed/arr_delayed for delays
+            dep_delay = flight.get("dep_delayed") or 0
+            arr_delay = flight.get("arr_delayed") or 0
+
+            # Calculate actual times if delayed
+            actual_dep = None
+            actual_arr = None
+            if dep_delay and scheduled_dep:
+                from datetime import timedelta
+                actual_dep = scheduled_dep + timedelta(minutes=dep_delay)
+            if arr_delay and scheduled_arr:
+                from datetime import timedelta
+                actual_arr = scheduled_arr + timedelta(minutes=arr_delay)
 
             # Determine status
-            status = flight.get("flight_status", "unknown")
+            status = flight.get("status", "scheduled")
+            # Map AirLabs status to our format
+            status_map = {
+                "scheduled": "scheduled",
+                "active": "active",
+                "en-route": "active",
+                "landed": "landed",
+                "cancelled": "cancelled",
+                "diverted": "diverted"
+            }
+            status = status_map.get(status.lower(), status) if status else "scheduled"
 
-            # Calculate delay
-            delay = departure.get("delay", 0) or 0
+            # Get airline name from flight number prefix
+            airline_code = flight.get("airline_iata", flight_number[:2])
 
             return FlightStatus(
                 flight_number=flight_number,
-                airline=flight.get("airline", {}).get("name", ""),
-                departure_airport=departure.get("airport", ""),
-                departure_code=departure.get("iata", ""),
-                arrival_airport=arrival.get("airport", ""),
-                arrival_code=arrival.get("iata", ""),
+                airline=flight.get("airline_name", airline_code),
+                departure_airport=flight.get("dep_name", ""),
+                departure_code=flight.get("dep_iata", ""),
+                arrival_airport=flight.get("arr_name", ""),
+                arrival_code=flight.get("arr_iata", ""),
                 status=status,
                 scheduled_departure=scheduled_dep,
                 actual_departure=actual_dep,
                 scheduled_arrival=scheduled_arr,
                 actual_arrival=actual_arr,
-                delay_minutes=delay
+                delay_minutes=dep_delay
             )
 
         except Exception as e:
