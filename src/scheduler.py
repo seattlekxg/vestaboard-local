@@ -25,7 +25,7 @@ class MessageScheduler:
     ):
         self.client = client or VestaboardClient()
         self.storage = storage or Storage()
-        self.weather_fetcher = WeatherFetcher()
+        self.weather_fetcher = WeatherFetcher(storage=self.storage)
         self.stock_fetcher = StockFetcher(storage=self.storage)
         self.calendar_fetcher = CalendarFetcher()
         self.news_fetcher = NewsFetcher()

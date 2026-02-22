@@ -50,8 +50,17 @@ class NewsHeadline:
 class WeatherFetcher:
     """Fetch weather data from OpenWeatherMap."""
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, storage=None):
         self.api_key = api_key or config.openweather_api_key
+        self.storage = storage
+
+    def get_location(self) -> str:
+        """Get weather location from database or config."""
+        if self.storage:
+            saved = self.storage.get_setting("weather_location")
+            if saved:
+                return saved
+        return config.weather_location or "Seattle,WA,US"
 
     def fetch(self, location: Optional[str] = None) -> Optional[WeatherData]:
         """Fetch current weather.
@@ -66,7 +75,7 @@ class WeatherFetcher:
             print("OpenWeatherMap API key not configured")
             return None
 
-        location = location or config.weather_location
+        location = location or self.get_location()
         url = "https://api.openweathermap.org/data/2.5/weather"
 
         try:

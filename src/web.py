@@ -240,6 +240,17 @@ CONTROL_PANEL_HTML = """
     </div>
 
     <div class="card">
+        <h2>Weather Settings</h2>
+        <p style="color:#666;font-size:14px;margin:0 0 10px;">Location for weather updates</p>
+        <div id="weatherLocation">Loading...</div>
+        <hr>
+        <h3>Change Location</h3>
+        <input type="text" id="newWeatherLocation" placeholder="City, State, Country (e.g., Seattle, WA, US)">
+        <p style="color:#666;font-size:12px;margin:5px 0;">Format: City,State,Country or City,Country</p>
+        <button onclick="saveWeatherLocation()">Save Location</button>
+    </div>
+
+    <div class="card">
         <h2>Stocks</h2>
         <p style="color:#666;font-size:14px;margin:0 0 10px;">Symbols to display when Stocks is shown</p>
         <div id="stocksList">Loading...</div>
@@ -544,6 +555,35 @@ CONTROL_PANEL_HTML = """
         async function clearBoard() {
             const res = await api('POST', '/clear');
             alert(res.success ? 'Cleared!' : 'Failed');
+        }
+
+        async function loadWeatherLocation() {
+            const res = await api('GET', '/weather/location');
+            const div = document.getElementById('weatherLocation');
+            if (res.location) {
+                div.innerHTML = `<p><strong>Current:</strong> ${res.location}</p>`;
+                document.getElementById('newWeatherLocation').placeholder = res.location;
+            } else {
+                div.innerHTML = '<p>No location configured.</p>';
+            }
+        }
+
+        async function saveWeatherLocation() {
+            const input = document.getElementById('newWeatherLocation');
+            const location = input.value.trim();
+            if (!location) {
+                alert('Please enter a location');
+                return;
+            }
+
+            const res = await api('PUT', '/weather/location', { location });
+            if (res.success) {
+                alert('Weather location saved!');
+                input.value = '';
+                loadWeatherLocation();
+            } else {
+                alert('Failed to save location: ' + (res.error || 'Unknown error'));
+            }
         }
 
         async function loadStocks() {
@@ -925,6 +965,7 @@ CONTROL_PANEL_HTML = """
         // Load data on page load
         initBoard();
         loadCurrentBoard();
+        loadWeatherLocation();
         loadStocks();
         loadSchedules();
         loadCountdowns();
@@ -982,7 +1023,7 @@ def api_send_message():
 @app.route("/api/message/weather", methods=["POST"])
 def api_send_weather():
     """Send weather to the Vestaboard."""
-    fetcher = WeatherFetcher()
+    fetcher = WeatherFetcher(storage=storage)
     weather = fetcher.fetch()
 
     if not weather:
@@ -1100,6 +1141,33 @@ def api_remove_stock_symbol(symbol: str):
     return jsonify({"success": True, "symbols": symbols})
 
 
+# ========== Weather Settings ==========
+
+@app.route("/api/weather/location", methods=["GET"])
+def api_get_weather_location():
+    """Get configured weather location."""
+    # First check database, then fall back to config
+    saved = storage.get_setting("weather_location")
+    if saved:
+        location = saved
+    else:
+        location = config.weather_location or "Seattle,WA,US"
+    return jsonify({"location": location})
+
+
+@app.route("/api/weather/location", methods=["PUT"])
+def api_set_weather_location():
+    """Set weather location."""
+    data = request.get_json() or {}
+    location = data.get("location", "").strip()
+
+    if not location:
+        return jsonify({"success": False, "error": "Location required"}), 400
+
+    storage.set_setting("weather_location", location)
+    return jsonify({"success": True, "location": location})
+
+
 # ========== Webhook Endpoint ==========
 
 @app.route("/api/webhook", methods=["POST"])
@@ -1118,7 +1186,7 @@ def api_webhook():
     if msg_type == "text" and text:
         success = client.send_message(text)
     elif msg_type == "weather":
-        fetcher = WeatherFetcher()
+        fetcher = WeatherFetcher(storage=storage)
         weather = fetcher.fetch()
         if weather:
             lines = fetcher.format_for_board(weather)
