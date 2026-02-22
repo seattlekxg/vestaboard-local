@@ -16,6 +16,7 @@ RUN mkdir -p /app/data
 EXPOSE 8080
 
 # Environment variables (override with -e or docker-compose)
+ENV PYTHONUNBUFFERED=1
 ENV VESTABOARD_LOCAL_URL=""
 ENV WEB_HOST=0.0.0.0
 ENV WEB_PORT=8080
