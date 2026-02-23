@@ -2,7 +2,7 @@
 
 import threading
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from typing import Callable, Optional
 
 from croniter import croniter
@@ -13,6 +13,9 @@ from .storage import Storage, ScheduledMessage
 
 # Flight statuses that indicate the flight is complete
 COMPLETED_STATUSES = ["landed", "cancelled", "diverted"]
+
+# Hours after landing before auto-removing a flight
+FLIGHT_CLEANUP_HOURS = 3
 
 
 class MessageScheduler:
@@ -160,11 +163,50 @@ class MessageScheduler:
             except Exception as e:
                 print(f"Error checking flight {flight.flight_number}: {e}")
 
+    def cleanup_old_flights(self):
+        """Remove flights that landed more than FLIGHT_CLEANUP_HOURS ago."""
+        flights = self.storage.get_flights(enabled_only=False, include_past=True)
+        now = datetime.now(timezone.utc)
+
+        for flight in flights:
+            try:
+                # Fetch current status
+                status = self.flight_fetcher.fetch(flight.flight_number, flight.flight_date)
+
+                if not status:
+                    # If flight is in the past and we can't get status, check if it's old enough to remove
+                    if flight.flight_date < date.today():
+                        days_old = (date.today() - flight.flight_date).days
+                        if days_old >= 1:  # Remove flights from yesterday or earlier
+                            print(f"Removing old flight {flight.flight_number} (no status, {days_old} days old)")
+                            self.storage.delete_flight(flight.id)
+                    continue
+
+                # Check if flight has landed
+                if status.status in COMPLETED_STATUSES:
+                    # Get arrival time (prefer actual, fall back to scheduled)
+                    arrival_time = status.actual_arrival or status.scheduled_arrival
+
+                    if arrival_time:
+                        # Make sure we compare timezone-aware datetimes
+                        if arrival_time.tzinfo is None:
+                            arrival_time = arrival_time.replace(tzinfo=timezone.utc)
+
+                        hours_since_landing = (now - arrival_time).total_seconds() / 3600
+
+                        if hours_since_landing >= FLIGHT_CLEANUP_HOURS:
+                            print(f"Auto-removing flight {flight.flight_number} ({hours_since_landing:.1f}h since landing)")
+                            self.storage.delete_flight(flight.id)
+
+            except Exception as e:
+                print(f"Error cleaning up flight {flight.flight_number}: {e}")
+
     def _flight_tracker_loop(self):
         """Background loop for flight tracking (runs every 10 minutes)."""
         while self._running:
             try:
                 self.check_active_flights()
+                self.cleanup_old_flights()
             except Exception as e:
                 print(f"Flight tracker error: {e}")
             # Sleep for 10 minutes (600 seconds)
