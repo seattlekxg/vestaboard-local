@@ -504,26 +504,40 @@ class FlightFetcher:
             # Get the first matching flight
             flight = flights[0]
 
-            # Parse times (AirLabs format: "2024-01-15 08:00")
-            def parse_time(time_str):
+            # Parse times - prefer UTC times from AirLabs for accurate calculations
+            def parse_time(time_str, is_utc=False):
                 if not time_str:
                     return None
                 try:
                     # Try parsing with timezone info first
                     if "+" in time_str or "Z" in time_str:
                         return datetime.fromisoformat(time_str.replace("Z", "+00:00"))
-                    # Parse local time and assume it's in local timezone
+                    # Parse the time string
                     dt = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-                    return dt.replace(tzinfo=LOCAL_TZ)
+                    if is_utc:
+                        # Mark as UTC
+                        from datetime import timezone
+                        return dt.replace(tzinfo=timezone.utc)
+                    return dt
                 except:
                     try:
                         dt = datetime.fromisoformat(time_str)
-                        return dt.replace(tzinfo=LOCAL_TZ)
+                        if is_utc:
+                            from datetime import timezone
+                            return dt.replace(tzinfo=timezone.utc)
+                        return dt
                     except:
                         return None
 
-            scheduled_dep = parse_time(flight.get("dep_time"))
-            scheduled_arr = parse_time(flight.get("arr_time"))
+            # Use UTC times for accurate time remaining calculations
+            # Fall back to local times if UTC not available
+            scheduled_dep = parse_time(flight.get("dep_time_utc"), is_utc=True)
+            if not scheduled_dep:
+                scheduled_dep = parse_time(flight.get("dep_time"))
+
+            scheduled_arr = parse_time(flight.get("arr_time_utc"), is_utc=True)
+            if not scheduled_arr:
+                scheduled_arr = parse_time(flight.get("arr_time"))
 
             # AirLabs uses dep_delayed/arr_delayed for delays
             dep_delay = flight.get("dep_delayed") or 0
