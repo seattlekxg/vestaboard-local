@@ -936,6 +936,15 @@ CONTROL_PANEL_HTML = """
             loadSchedules();
         }
 
+        function formatLocalTime(isoString) {
+            const date = new Date(isoString);
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            return `${month}-${day} ${hours}:${minutes}`;
+        }
+
         async function loadLogs() {
             const res = await api('GET', '/logs');
             const div = document.getElementById('logs');
@@ -945,7 +954,7 @@ CONTROL_PANEL_HTML = """
             }
             div.innerHTML = res.logs.slice(0, 10).map(l => `
                 <div class="log-entry ${l.success ? 'success' : 'fail'}">
-                    ${l.sent_at} - ${l.message_type}
+                    ${formatLocalTime(l.sent_at)} - ${l.message_type}
                     ${l.success ? '✓' : '✗'}
                 </div>
             `).join('');
@@ -1514,7 +1523,7 @@ def api_get_logs():
                 "id": l.id,
                 "message_type": l.message_type,
                 "content": l.content[:100] if l.content else "",
-                "sent_at": l.sent_at.strftime("%Y-%m-%d %H:%M"),
+                "sent_at": l.sent_at.isoformat() + "Z",  # UTC time in ISO format
                 "success": l.success
             }
             for l in logs
