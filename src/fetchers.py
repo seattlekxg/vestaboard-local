@@ -496,6 +496,10 @@ class FlightFetcher:
                         matching.append(f)
                 if matching:
                     flights = matching
+                else:
+                    # No flights found for the specified date
+                    print(f"No flight found for {flight_number} on {flight_date}")
+                    return None
 
             if not flights:
                 print(f"No flight found for {flight_number}")
