@@ -60,6 +60,8 @@ Open `http://your-nas-ip:8080` in your browser.
 | `STOCK_SYMBOLS` | Comma-separated stock symbols (default: SPY,QQQ) |
 | `CALENDAR_URL` | Google Calendar ICS URL |
 | `NEWS_API_KEY` | NewsAPI key for news headlines |
+| `AIRLABS_API_KEY` | AirLabs API key for flight tracking |
+| `TZ` | Timezone for scheduling and display, as an IANA name e.g. `America/New_York` (default: `America/Los_Angeles`) |
 
 ## API Endpoints
 

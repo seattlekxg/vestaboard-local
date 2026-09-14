@@ -33,6 +33,11 @@ class Config:
     # Flight Tracking (AirLabs)
     airlabs_api_key: Optional[str] = None
 
+    # Timezone for scheduling and display (e.g. "America/Los_Angeles").
+    # Also honored by the OS/Python as the TZ environment variable, so it
+    # controls what naive datetime.now() calls resolve to throughout the app.
+    timezone: str = "America/Los_Angeles"
+
     # Web server
     web_host: str = "0.0.0.0"
     web_port: int = 8080
@@ -59,6 +64,7 @@ class Config:
             calendar_url=os.getenv("CALENDAR_URL"),
             news_api_key=os.getenv("NEWS_API_KEY"),
             airlabs_api_key=os.getenv("AIRLABS_API_KEY"),
+            timezone=os.getenv("TZ", "America/Los_Angeles"),
             web_host=os.getenv("WEB_HOST", "0.0.0.0"),
             web_port=int(os.getenv("WEB_PORT", "8080")),
             db_path=os.getenv("DB_PATH", "data/vestaboard.db"),

@@ -25,6 +25,12 @@ services:
       # Optional: News
       - NEWS_API_KEY=${NEWS_API_KEY:-}
 
+      # Optional: Flight Tracking
+      - AIRLABS_API_KEY=${AIRLABS_API_KEY:-}
+
+      # Timezone for scheduling and display (defaults to America/Los_Angeles)
+      - TZ=${TZ:-America/Los_Angeles}
+
       # Server config
       - WEB_PORT=8080
       - DB_PATH=/app/data/vestaboard.db

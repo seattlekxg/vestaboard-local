@@ -103,8 +103,12 @@ class MessageScheduler:
 
         # Log the result
         self.storage.log_message(msg.message_type, content, success)
-        if success:
-            self.storage.update_last_run(msg.id)
+        # Advance last_run whether or not the send succeeded. Otherwise a
+        # failing schedule (e.g. board unreachable) never advances past
+        # `datetime(2000, 1, 1)` in check_and_run_scheduled and gets retried
+        # on every check_interval tick indefinitely instead of waiting for
+        # its next scheduled occurrence.
+        self.storage.update_last_run(msg.id)
 
         return success
 

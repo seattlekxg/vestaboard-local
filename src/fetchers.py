@@ -8,8 +8,8 @@ from zoneinfo import ZoneInfo
 
 from .config import config
 
-# Default timezone for display
-LOCAL_TZ = ZoneInfo("America/Los_Angeles")
+# Timezone for display, configurable via the TZ env var (see config.py)
+LOCAL_TZ = ZoneInfo(config.timezone)
 
 
 @dataclass
@@ -654,12 +654,16 @@ class FlightFetcher:
         now = datetime.now(LOCAL_TZ)
 
         def to_local(dt):
-            """Convert datetime to local timezone."""
-            if dt is None:
+            """Convert an aware datetime to local timezone.
+
+            Returns None for naive datetimes rather than guessing: AirLabs'
+            non-UTC fallback fields (dep_time/arr_time) are in the airport's
+            local time, not necessarily ours, so they aren't safe to compare
+            against an aware "now" or to display as if they were local.
+            """
+            if dt is None or dt.tzinfo is None:
                 return None
-            if dt.tzinfo is not None:
-                return dt.astimezone(LOCAL_TZ)
-            return dt
+            return dt.astimezone(LOCAL_TZ)
 
         if flight_status.status == "active":
             # In flight - show time remaining
