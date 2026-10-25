@@ -12,8 +12,7 @@ services:
       - VESTABOARD_LOCAL_URL=${VESTABOARD_LOCAL_URL}
       - VESTABOARD_LOCAL_KEY=${VESTABOARD_LOCAL_KEY}
 
-      # Optional: Weather
-      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY:-}
+      # Optional: Weather (Open-Meteo, no API key required)
       - WEATHER_LOCATION=${WEATHER_LOCATION:-Seattle,WA,US}
 
       # Optional: Stocks

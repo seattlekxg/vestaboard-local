@@ -17,8 +17,7 @@ class Config:
     vestaboard_local_url: str = ""
     vestaboard_local_key: str = ""
 
-    # Weather API (OpenWeatherMap)
-    openweather_api_key: Optional[str] = None
+    # Weather (Open-Meteo - no API key required)
     weather_location: str = "Seattle,WA,US"
 
     # Stock symbols to track
@@ -58,7 +57,6 @@ class Config:
         return cls(
             vestaboard_local_url=os.getenv("VESTABOARD_LOCAL_URL", ""),
             vestaboard_local_key=os.getenv("VESTABOARD_LOCAL_KEY", ""),
-            openweather_api_key=os.getenv("OPENWEATHER_API_KEY"),
             weather_location=os.getenv("WEATHER_LOCATION", "Seattle,WA,US"),
             stock_symbols=stock_symbols,
             calendar_url=os.getenv("CALENDAR_URL"),

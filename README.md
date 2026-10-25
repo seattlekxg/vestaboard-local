@@ -8,7 +8,7 @@ Automate your Vestaboard over your local network. Schedule messages, display wea
 - **Web Control Panel** - Easy-to-use interface for sending messages
 - **Scheduled Messages** - Cron-based scheduling for automated content
 - **Data Integrations**:
-  - Weather (OpenWeatherMap)
+  - Weather (Open-Meteo)
   - Stock prices (Yahoo Finance)
   - Calendar events (Google Calendar ICS)
   - News headlines (NewsAPI)
@@ -55,8 +55,7 @@ Open `http://your-nas-ip:8080` in your browser.
 
 | Variable | Description |
 |----------|-------------|
-| `OPENWEATHER_API_KEY` | OpenWeatherMap API key for weather |
-| `WEATHER_LOCATION` | Location for weather (default: Seattle,WA,US) |
+| `WEATHER_LOCATION` | Location for weather (default: Seattle,WA,US). Powered by [Open-Meteo](https://open-meteo.com/) — free, no API key needed |
 | `STOCK_SYMBOLS` | Comma-separated stock symbols (default: SPY,QQQ) |
 | `CALENDAR_URL` | Google Calendar ICS URL |
 | `NEWS_API_KEY` | NewsAPI key for news headlines |

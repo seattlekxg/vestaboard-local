@@ -1,7 +1,7 @@
 """Data fetchers for various information sources."""
 
 import requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 from typing import Optional
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -48,10 +48,31 @@ class NewsHeadline:
 
 
 class WeatherFetcher:
-    """Fetch weather data from OpenWeatherMap."""
+    """Fetch weather data from Open-Meteo (free, no API key required).
 
-    def __init__(self, api_key: Optional[str] = None, storage=None):
-        self.api_key = api_key or config.openweather_api_key
+    Open-Meteo's /forecast endpoint reports the actual daily high/low
+    (temperature_2m_max/min over the calendar day, per the location's own
+    timezone), unlike OpenWeatherMap's free current-conditions endpoint,
+    whose temp_max/temp_min are just the spread observed across nearby
+    stations right now.
+    """
+
+    # WMO weather codes -> short display condition. See
+    # https://open-meteo.com/en/docs for the full code table.
+    WEATHER_CODES = {
+        0: "Clear", 1: "Mainly Clear", 2: "Partly Cloudy", 3: "Cloudy",
+        45: "Fog", 48: "Fog",
+        51: "Light Drizzle", 53: "Drizzle", 55: "Heavy Drizzle",
+        56: "Freezing Drizzle", 57: "Freezing Drizzle",
+        61: "Light Rain", 63: "Rain", 65: "Heavy Rain",
+        66: "Freezing Rain", 67: "Freezing Rain",
+        71: "Light Snow", 73: "Snow", 75: "Heavy Snow", 77: "Snow Grains",
+        80: "Rain Showers", 81: "Rain Showers", 82: "Heavy Showers",
+        85: "Snow Showers", 86: "Snow Showers",
+        95: "Thunderstorm", 96: "Thunderstorm", 99: "Thunderstorm",
+    }
+
+    def __init__(self, storage=None):
         self.storage = storage
 
     def get_location(self) -> str:
@@ -62,8 +83,53 @@ class WeatherFetcher:
                 return saved
         return config.weather_location or "Seattle,WA,US"
 
+    def _geocode(self, location: str) -> Optional[tuple[float, float, str]]:
+        """Resolve a "City,State,Country" string to (lat, lon, display name).
+
+        Results are cached in storage since a city's coordinates never
+        change, so normal fetches don't pay for a geocoding round trip.
+        """
+        cache_key = f"weather_geocode:{location.lower()}"
+        if self.storage:
+            cached = self.storage.get_setting(cache_key)
+            if cached:
+                try:
+                    lat_s, lon_s, name = cached.split("|", 2)
+                    return float(lat_s), float(lon_s), name
+                except ValueError:
+                    pass
+
+        # The geocoder matches on city name; "Seattle,WA,US" only needs
+        # the "Seattle" part.
+        query = location.split(",")[0].strip()
+
+        try:
+            response = requests.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": query, "count": 1},
+                timeout=10
+            )
+            response.raise_for_status()
+            results = response.json().get("results")
+        except Exception as e:
+            print(f"Error geocoding weather location '{location}': {e}")
+            return None
+
+        if not results:
+            print(f"No geocoding match for weather location '{location}'")
+            return None
+
+        r = results[0]
+        lat, lon = r["latitude"], r["longitude"]
+        name = r["name"]
+
+        if self.storage:
+            self.storage.set_setting(cache_key, f"{lat}|{lon}|{name}")
+
+        return lat, lon, name
+
     def fetch(self, location: Optional[str] = None) -> Optional[WeatherData]:
-        """Fetch current weather.
+        """Fetch current weather plus today's forecast high and low.
 
         Args:
             location: Location string (e.g., "Seattle,WA,US").
@@ -71,33 +137,42 @@ class WeatherFetcher:
         Returns:
             WeatherData or None if fetch failed.
         """
-        if not self.api_key:
-            print("OpenWeatherMap API key not configured")
-            return None
-
         location = location or self.get_location()
-        url = "https://api.openweathermap.org/data/2.5/weather"
+
+        geo = self._geocode(location)
+        if not geo:
+            return None
+        lat, lon, display_name = geo
 
         try:
             response = requests.get(
-                url,
+                "https://api.open-meteo.com/v1/forecast",
                 params={
-                    "q": location,
-                    "appid": self.api_key,
-                    "units": "imperial"
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "temperature_2m,relative_humidity_2m,weather_code",
+                    "daily": "temperature_2m_max,temperature_2m_min",
+                    "temperature_unit": "fahrenheit",
+                    # "auto" resolves day boundaries to the forecast
+                    # location's own timezone, not the server's.
+                    "timezone": "auto",
+                    "forecast_days": 1,
                 },
                 timeout=10
             )
             response.raise_for_status()
             data = response.json()
 
+            current = data["current"]
+            daily = data["daily"]
+
             return WeatherData(
-                location=data.get("name", location),
-                temp_f=int(data["main"]["temp"]),
-                condition=data["weather"][0]["main"],
-                high_f=int(data["main"]["temp_max"]),
-                low_f=int(data["main"]["temp_min"]),
-                humidity=data["main"]["humidity"]
+                location=display_name,
+                temp_f=round(current["temperature_2m"]),
+                condition=self.WEATHER_CODES.get(current["weather_code"], "Unknown"),
+                high_f=round(daily["temperature_2m_max"][0]),
+                low_f=round(daily["temperature_2m_min"][0]),
+                humidity=round(current["relative_humidity_2m"])
             )
         except Exception as e:
             print(f"Error fetching weather: {e}")
